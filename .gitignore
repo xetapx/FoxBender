@@ -1,0 +1,30 @@
+# käännetyt tiedostot
+*.o
+*.obj
+*.exe
+*.out
+
+# CAD / export
+*.dxf
+
+# jsonit
+*.json
+
+# build-kansiot
+build/
+bin/
+dist/
+
+# cmake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+
+# editorit
+.vscode/
+.idea/
+
+# käyttöjärjestelmä
+.DS_Store
+Thumbs.db

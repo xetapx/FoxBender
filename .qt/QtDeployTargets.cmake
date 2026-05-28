@@ -1,0 +1,4 @@
+set(__QT_DEPLOY_TARGET_dxfrw_vendor_FILE /home/pate/FoxBender/libdxfrw_vendor.a)
+set(__QT_DEPLOY_TARGET_dxfrw_vendor_TYPE STATIC_LIBRARY)
+set(__QT_DEPLOY_TARGET_FoxBender_FILE /home/pate/FoxBender/FoxBender)
+set(__QT_DEPLOY_TARGET_FoxBender_TYPE EXECUTABLE)
