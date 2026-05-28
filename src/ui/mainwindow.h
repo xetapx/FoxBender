@@ -20,6 +20,7 @@ class QPushButton;
 class QTableWidget;
 class QUndoStack;
 class QTreeWidgetItem;
+class QShortcut;
 
 class MainWindow : public QMainWindow
 {
@@ -53,6 +54,7 @@ private slots:
     void handleFlagScaleChanged(int value);
     void handleFlagFillChanged(bool checked);
     void handlePortLengthChanged();
+    void acceptHoveredCandidateChain();
 
 private:
     enum class ToolMode
@@ -83,6 +85,7 @@ private:
     void updateViewColorUi();
     void updateFlagPreview();
     void recomputeDetectedPorts();
+    bool acceptCandidateChainByEntityIndex(int entityIndex);
     int findEntityIndexById(const QString &entityId) const;
 
     Ui::MainWindow *ui;
@@ -102,6 +105,7 @@ private:
     double m_pendingFilletRadius = 0.0;
     int m_pendingFilletFirstEntity = -1;
     QStringList m_pendingBladeLineEntityIds;
+    QList<QList<int>> m_candidateChains;
     bool m_isPopulatingToolTable = false;
 };
 

@@ -12,18 +12,37 @@
 
 # build-kansiot
 build/
+build-qmake/
+FoxBender_autogen/
+Testing/
 bin/
 dist/
 
 # cmake
 CMakeFiles/
 CMakeCache.txt
+CMakeCache.txt.prev
 cmake_install.cmake
 Makefile
+.cmake/
+
+# qmake / qt generaattorit
+.qmake.stash
+moc_*.cpp
+moc_predefs.h
+ui_*.h
+*.d
+
+# binäärit / kirjastot
+FoxBender
+*.a
 
 # editorit
 .vscode/
 .idea/
+.qt/
+.qtc_clangd/
+.qtcreator/
 
 # käyttöjärjestelmä
 .DS_Store

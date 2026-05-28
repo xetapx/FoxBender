@@ -7,6 +7,7 @@
 #include <QColorDialog>
 #include <QDoubleSpinBox>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QFont>
 #include <QHeaderView>
 #include <QInputDialog>
@@ -15,6 +16,7 @@
 #include <QPainter>
 #include <QSignalBlocker>
 #include <QPushButton>
+#include <QShortcut>
 #include <QSlider>
 #include <QStatusBar>
 #include <QTableWidgetItem>
@@ -754,6 +756,130 @@ QList<int> expandPortCandidates(const QList<DetectedPort> &ports,
     return expanded;
 }
 
+int findPortIndexForEntities(const QList<DetectedPort> &ports, int firstEntityIndex, int secondEntityIndex)
+{
+    for (int portIndex = 0; portIndex < ports.size(); ++portIndex) {
+        const DetectedPort &port = ports.at(portIndex);
+        if (port.relatedEntityIndexes.size() != 2) {
+            continue;
+        }
+        if ((port.relatedEntityIndexes.at(0) == firstEntityIndex && port.relatedEntityIndexes.at(1) == secondEntityIndex)
+            || (port.relatedEntityIndexes.at(0) == secondEntityIndex && port.relatedEntityIndexes.at(1) == firstEntityIndex)) {
+            return portIndex;
+        }
+    }
+    return -1;
+}
+
+bool entitiesShareSelectableFamily(const DxfDocument &document,
+                                   int firstEntityIndex,
+                                   int secondEntityIndex,
+                                   double tolerance)
+{
+    if (firstEntityIndex < 0 || secondEntityIndex < 0
+        || firstEntityIndex >= document.entities.size()
+        || secondEntityIndex >= document.entities.size()) {
+        return false;
+    }
+
+    const DxfEntity &first = document.entities.at(firstEntityIndex);
+    const DxfEntity &second = document.entities.at(secondEntityIndex);
+    if (first.type != second.type) {
+        return false;
+    }
+
+    if (first.type == DxfEntityType::Line) {
+        return linesShareInfiniteLine(first, second, tolerance);
+    }
+
+    if (first.type == DxfEntityType::Arc) {
+        return QLineF(first.center, second.center).length() <= tolerance
+               && qAbs(first.radius - second.radius) <= tolerance;
+    }
+
+    return false;
+}
+
+bool entitiesDirectlyTouch(const PathEndpointInfo &firstInfo, const PathEndpointInfo &secondInfo)
+{
+    return pointsNear(firstInfo.startPoint, secondInfo.startPoint)
+           || pointsNear(firstInfo.startPoint, secondInfo.endPoint)
+           || pointsNear(firstInfo.endPoint, secondInfo.startPoint)
+           || pointsNear(firstInfo.endPoint, secondInfo.endPoint);
+}
+
+QList<int> sameFamilyNextEntities(const DxfDocument &document,
+                                  const QList<DetectedPort> &ports,
+                                  int currentEntityIndex,
+                                  int previousEntityIndex,
+                                  const QList<int> &blockedIndexes,
+                                  double tolerance)
+{
+    QList<int> nextIndexes;
+    if (currentEntityIndex < 0 || currentEntityIndex >= document.entities.size()) {
+        return nextIndexes;
+    }
+
+    const PathEndpointInfo currentInfo = endpointInfoForEntity(document.entities.at(currentEntityIndex));
+    if (!currentInfo.valid) {
+        return nextIndexes;
+    }
+
+    for (int index = 0; index < document.entities.size(); ++index) {
+        if (index == currentEntityIndex || index == previousEntityIndex || blockedIndexes.contains(index)) {
+            continue;
+        }
+
+        const PathEndpointInfo candidateInfo = endpointInfoForEntity(document.entities.at(index));
+        if (!candidateInfo.valid
+            || !entitiesShareSelectableFamily(document, currentEntityIndex, index, tolerance)) {
+            continue;
+        }
+
+        if (entitiesDirectlyTouch(currentInfo, candidateInfo)
+            || findPortIndexForEntities(ports, currentEntityIndex, index) >= 0) {
+            nextIndexes.append(index);
+        }
+    }
+
+    return nextIndexes;
+}
+
+QList<int> buildCandidateChain(const DxfDocument &document,
+                               const QList<DetectedPort> &ports,
+                               int previousEntityIndex,
+                               int seedEntityIndex,
+                               const QList<int> &blockedIndexes,
+                               double tolerance)
+{
+    QList<int> chain;
+    if (seedEntityIndex < 0 || seedEntityIndex >= document.entities.size()) {
+        return chain;
+    }
+
+    chain.append(seedEntityIndex);
+    int priorEntityIndex = previousEntityIndex;
+    int currentEntityIndex = seedEntityIndex;
+
+    while (true) {
+        const QList<int> nextIndexes = sameFamilyNextEntities(document,
+                                                              ports,
+                                                              currentEntityIndex,
+                                                              priorEntityIndex,
+                                                              mergeUniqueIndexes(blockedIndexes, chain),
+                                                              tolerance);
+        if (nextIndexes.size() != 1) {
+            break;
+        }
+
+        priorEntityIndex = currentEntityIndex;
+        currentEntityIndex = nextIndexes.first();
+        chain.append(currentEntityIndex);
+    }
+
+    return chain;
+}
+
 QList<int> candidateBladeLineIndexes(const DxfDocument &document,
                                      const QStringList &pendingEntityIds,
                                      const QList<DetectedPort> &ports)
@@ -830,6 +956,49 @@ QList<int> candidateBladeLineIndexes(const DxfDocument &document,
     }
 
     return expandPortCandidates(ports, pendingIndexes, seedIndexes);
+}
+
+QList<QList<int>> candidateBladeLineChains(const DxfDocument &document,
+                                           const QStringList &pendingEntityIds,
+                                           const QList<DetectedPort> &ports,
+                                           double tolerance)
+{
+    QList<QList<int>> chains;
+    const QList<int> pendingIndexes = resolveBladeLineIndexes(document, pendingEntityIds);
+    const QList<int> seedIndexes = candidateBladeLineIndexes(document, pendingEntityIds, ports);
+    if (seedIndexes.isEmpty()) {
+        return chains;
+    }
+
+    int previousEntityIndex = -1;
+    if (pendingIndexes.size() >= 2) {
+        previousEntityIndex = pendingIndexes.at(pendingIndexes.size() - 2);
+    }
+
+    for (int seedIndex : seedIndexes) {
+        QList<int> chain = buildCandidateChain(document,
+                                               ports,
+                                               previousEntityIndex,
+                                               seedIndex,
+                                               pendingIndexes,
+                                               tolerance);
+        if (chain.isEmpty()) {
+            continue;
+        }
+
+        bool duplicate = false;
+        for (const QList<int> &existing : std::as_const(chains)) {
+            if (existing == chain) {
+                duplicate = true;
+                break;
+            }
+        }
+        if (!duplicate) {
+            chains.append(chain);
+        }
+    }
+
+    return chains;
 }
 
 PendingBladeLineState pendingBladeLineState(const DxfDocument &document,
@@ -1172,7 +1341,24 @@ void MainWindow::setupWindow()
     ui->simulationEventList->addItem(QStringLiteral("Simulation skeleton waiting for ToolAction data."));
     ui->menuEdit->addAction(m_undoStack->createUndoAction(this, QStringLiteral("Undo")));
     ui->menuEdit->addAction(m_undoStack->createRedoAction(this, QStringLiteral("Redo")));
+    ui->actionStartNewBladeLine->setShortcut(QKeySequence());
     updateViewColorUi();
+
+    auto *spaceShortcut = new QShortcut(QKeySequence(Qt::Key_Space), this);
+    connect(spaceShortcut, &QShortcut::activated,
+            this, &MainWindow::acceptHoveredCandidateChain);
+    auto *returnShortcut = new QShortcut(QKeySequence(Qt::Key_Return), this);
+    connect(returnShortcut, &QShortcut::activated, this, [this] {
+        if (m_toolMode == ToolMode::BladeLineBuild && !m_pendingBladeLineEntityIds.isEmpty()) {
+            startNewBladeLine();
+        }
+    });
+    auto *enterShortcut = new QShortcut(QKeySequence(Qt::Key_Enter), this);
+    connect(enterShortcut, &QShortcut::activated, this, [this] {
+        if (m_toolMode == ToolMode::BladeLineBuild && !m_pendingBladeLineEntityIds.isEmpty()) {
+            startNewBladeLine();
+        }
+    });
 
     connect(ui->actionOpenDxf, &QAction::triggered, this, &MainWindow::openDxfFile);
     connect(ui->actionStartNewBladeLine, &QAction::triggered, this, &MainWindow::startNewBladeLine);
@@ -1275,10 +1461,17 @@ void MainWindow::loadDemoGeometry()
 
 void MainWindow::openDxfFile()
 {
+    QString initialPath;
+    if (m_projectDocument.hasDxfFile()) {
+        initialPath = m_projectDocument.dxfFilePath;
+    } else if (!m_appSettings.lastDxfDirectory.isEmpty()) {
+        initialPath = m_appSettings.lastDxfDirectory;
+    }
+
     const QString filePath = QFileDialog::getOpenFileName(
         this,
         QStringLiteral("Open DXF File"),
-        m_projectDocument.hasDxfFile() ? m_projectDocument.dxfFilePath : QString(),
+        initialPath,
         QStringLiteral("DXF Files (*.dxf);;All Files (*)"));
 
     if (filePath.isEmpty()) {
@@ -1297,6 +1490,8 @@ void MainWindow::openDxfFile()
     applyLoadedDocument(result.document,
                         filePath,
                         QStringLiteral("Loaded DXF: %1").arg(filePath));
+    m_appSettings.lastDxfDirectory = QFileInfo(filePath).absolutePath();
+    saveAppSettings();
 }
 
 void MainWindow::updateBladeLineViewState()
@@ -1304,16 +1499,34 @@ void MainWindow::updateBladeLineViewState()
     QList<int> allIndexes = resolveAllBladeLineIndexes(m_geometryModel.dxfDocument, m_projectDocument.bladeLines);
     QList<int> activeIndexes;
     QList<int> candidateIndexes;
+    QList<int> highlightedPortIndexes;
     PendingBladeLineState pendingState;
+    m_candidateChains.clear();
 
     if (m_toolMode == ToolMode::BladeLineBuild) {
         activeIndexes = resolveBladeLineIndexes(m_geometryModel.dxfDocument, m_pendingBladeLineEntityIds);
         pendingState = pendingBladeLineState(m_geometryModel.dxfDocument,
                                              m_pendingBladeLineEntityIds,
                                              m_geometryModel.detectedPorts);
-        candidateIndexes = candidateBladeLineIndexes(m_geometryModel.dxfDocument,
+        m_candidateChains = candidateBladeLineChains(m_geometryModel.dxfDocument,
                                                      m_pendingBladeLineEntityIds,
-                                                     m_geometryModel.detectedPorts);
+                                                     m_geometryModel.detectedPorts,
+                                                     qMax(0.05, m_appSettings.defaultToleranceMm));
+        for (const QList<int> &chain : std::as_const(m_candidateChains)) {
+            candidateIndexes = mergeUniqueIndexes(candidateIndexes, chain);
+            const QList<int> pendingIndexes = resolveBladeLineIndexes(m_geometryModel.dxfDocument,
+                                                                      m_pendingBladeLineEntityIds);
+            int previousIndex = pendingIndexes.isEmpty() ? -1 : pendingIndexes.last();
+            for (int entityIndex : chain) {
+                const int portIndex = findPortIndexForEntities(m_geometryModel.detectedPorts,
+                                                               previousIndex,
+                                                               entityIndex);
+                if (portIndex >= 0 && !highlightedPortIndexes.contains(portIndex)) {
+                    highlightedPortIndexes.append(portIndex);
+                }
+                previousIndex = entityIndex;
+            }
+        }
         allIndexes = mergeUniqueIndexes(allIndexes, activeIndexes);
         allIndexes = mergeUniqueIndexes(allIndexes, candidateIndexes);
     } else {
@@ -1330,6 +1543,7 @@ void MainWindow::updateBladeLineViewState()
     ui->dxfView->setBladeLineEntityIndexes(allIndexes);
     ui->dxfView->setActiveBladeLineEntityIndexes(activeIndexes);
     ui->dxfView->setCandidateEntityIndexes(candidateIndexes);
+    ui->dxfView->setHighlightedPortIndexes(highlightedPortIndexes);
     ui->dxfView->setBladeLineGuide(pendingState.startPoint,
                                    pendingState.nextPoint,
                                    pendingState.hasDirection,
@@ -1503,14 +1717,10 @@ void MainWindow::handleEntityClicked(int entityIndex, const QPointF &scenePos)
         }
 
         if (!m_pendingBladeLineEntityIds.isEmpty()) {
-            const QList<int> candidateIndexes =
-                candidateBladeLineIndexes(m_geometryModel.dxfDocument,
-                                          m_pendingBladeLineEntityIds,
-                                          m_geometryModel.detectedPorts);
-            if (!candidateIndexes.contains(entityIndex)) {
+            if (!acceptCandidateChainByEntityIndex(entityIndex)) {
                 statusBar()->showMessage(QStringLiteral("Pick a connected next entity for BladeLine"), 4000);
-                return;
             }
+            return;
         }
 
         m_pendingBladeLineEntityIds.append(clickedEntity.id);
@@ -1519,7 +1729,7 @@ void MainWindow::handleEntityClicked(int entityIndex, const QPointF &scenePos)
         updateProjectSummary();
         ui->logList->addItem(QStringLiteral("Picked %1 for pending BladeLine")
                                  .arg(clickedEntity.id));
-        statusBar()->showMessage(QStringLiteral("BladeLine picking: %1 entities queued, Shift+A to build")
+        statusBar()->showMessage(QStringLiteral("BladeLine picking: %1 entities queued, right click or Enter to build")
                                      .arg(m_pendingBladeLineEntityIds.size()),
                                  3000);
         return;
@@ -1606,8 +1816,61 @@ void MainWindow::handleEntityClicked(int entityIndex, const QPointF &scenePos)
     }
 }
 
+void MainWindow::acceptHoveredCandidateChain()
+{
+    if (m_toolMode != ToolMode::BladeLineBuild || m_hoveredEntityIndex < 0) {
+        return;
+    }
+
+    if (m_pendingBladeLineEntityIds.isEmpty()) {
+        handleEntityClicked(m_hoveredEntityIndex, m_lastPointerScenePos);
+        return;
+    }
+
+    if (!acceptCandidateChainByEntityIndex(m_hoveredEntityIndex)) {
+        statusBar()->showMessage(QStringLiteral("Hover a candidate segment first"), 3000);
+    }
+}
+
+bool MainWindow::acceptCandidateChainByEntityIndex(int entityIndex)
+{
+    QList<int> matchedChain;
+    for (const QList<int> &chain : std::as_const(m_candidateChains)) {
+        if (chain.contains(entityIndex)) {
+            matchedChain = chain;
+            break;
+        }
+    }
+
+    if (matchedChain.isEmpty()) {
+        return false;
+    }
+
+    for (int chainEntityIndex : std::as_const(matchedChain)) {
+        const QString chainEntityId = m_geometryModel.dxfDocument.entities.at(chainEntityIndex).id;
+        if (!m_pendingBladeLineEntityIds.contains(chainEntityId)) {
+            m_pendingBladeLineEntityIds.append(chainEntityId);
+        }
+    }
+
+    updateBladeLineViewState();
+    populateEntityProperties();
+    updateProjectSummary();
+    ui->logList->addItem(QStringLiteral("Picked candidate chain with %1 entities for pending BladeLine")
+                             .arg(matchedChain.size()));
+    statusBar()->showMessage(QStringLiteral("BladeLine picking: %1 entities queued, right click or Enter to build")
+                                 .arg(m_pendingBladeLineEntityIds.size()),
+                             3000);
+    return true;
+}
+
 void MainWindow::cancelActiveTool()
 {
+    if (m_toolMode == ToolMode::BladeLineBuild && !m_pendingBladeLineEntityIds.isEmpty()) {
+        startNewBladeLine();
+        return;
+    }
+
     if (m_toolMode == ToolMode::None) {
         return;
     }
@@ -2071,7 +2334,7 @@ void MainWindow::updateToolStatus()
     case ToolMode::BladeLineBuild:
         ui->dxfView->setBreakPreviewEnabled(false);
         statusBar()->showMessage(
-            QStringLiteral("BladeLine: pick connected entities, Shift+A to build, right click to cancel (%1 queued)")
+            QStringLiteral("BladeLine: pick connected entities, Space accepts hover, right click or Enter builds (%1 queued)")
                 .arg(m_pendingBladeLineEntityIds.size()));
         break;
     case ToolMode::BreakPickEntity:
@@ -2250,11 +2513,9 @@ void MainWindow::populateEntityProperties()
     if (m_toolMode == ToolMode::BladeLineBuild) {
         auto *pendingHeader = new QTreeWidgetItem(ui->bladeLinePropertiesTree);
         pendingHeader->setText(0, QStringLiteral("Pending BladeLine"));
-        pendingHeader->setText(1, QStringLiteral("%1 entities | %2 candidates")
+        pendingHeader->setText(1, QStringLiteral("%1 entities | %2 candidate chains")
                                       .arg(m_pendingBladeLineEntityIds.size())
-                                      .arg(candidateBladeLineIndexes(m_geometryModel.dxfDocument,
-                                                                     m_pendingBladeLineEntityIds,
-                                                                     m_geometryModel.detectedPorts).size()));
+                                      .arg(m_candidateChains.size()));
         QFont pendingFont = pendingHeader->font(0);
         pendingFont.setBold(true);
         pendingHeader->setFont(0, pendingFont);
@@ -2274,6 +2535,70 @@ void MainWindow::populateEntityProperties()
             auto *pendingItem = new QTreeWidgetItem(pendingHeader);
             pendingItem->setText(0, QStringLiteral("Pending %1").arg(pendingIndex + 1));
             pendingItem->setText(1, valueText);
+        }
+
+        for (int chainIndex = 0; chainIndex < m_candidateChains.size(); ++chainIndex) {
+            const QList<int> &chain = m_candidateChains.at(chainIndex);
+            auto *chainRoot = new QTreeWidgetItem(pendingHeader);
+            chainRoot->setText(0, QStringLiteral("Candidate %1").arg(chainIndex + 1));
+            chainRoot->setText(1, QStringLiteral("%1 entities").arg(chain.size()));
+            chainRoot->setExpanded(true);
+
+            auto *linesRoot = new QTreeWidgetItem(chainRoot);
+            linesRoot->setText(0, QStringLiteral("Lines"));
+            auto *arcsRoot = new QTreeWidgetItem(chainRoot);
+            arcsRoot->setText(0, QStringLiteral("Arcs"));
+            auto *portsRoot = new QTreeWidgetItem(chainRoot);
+            portsRoot->setText(0, QStringLiteral("Ports"));
+
+            int lineCount = 0;
+            int arcCount = 0;
+            int portCount = 0;
+
+            for (int entityIndex : chain) {
+                if (entityIndex < 0 || entityIndex >= m_geometryModel.dxfDocument.entities.size()) {
+                    continue;
+                }
+
+                const DxfEntity &candidateEntity = m_geometryModel.dxfDocument.entities.at(entityIndex);
+                if (candidateEntity.type == DxfEntityType::Line) {
+                    ++lineCount;
+                    auto *item = new QTreeWidgetItem(linesRoot);
+                    item->setText(0, QStringLiteral("Line %1").arg(lineCount));
+                    item->setText(1, candidateEntity.summary());
+                } else if (candidateEntity.type == DxfEntityType::Arc) {
+                    ++arcCount;
+                    auto *item = new QTreeWidgetItem(arcsRoot);
+                    item->setText(0, QStringLiteral("Arc %1").arg(arcCount));
+                    item->setText(1, candidateEntity.summary());
+                }
+            }
+
+            const QList<int> pendingIndexes = resolveBladeLineIndexes(m_geometryModel.dxfDocument, m_pendingBladeLineEntityIds);
+            int previousIndex = pendingIndexes.isEmpty() ? -1 : pendingIndexes.last();
+            for (int entityIndex : chain) {
+                const int portIndex = findPortIndexForEntities(m_geometryModel.detectedPorts, previousIndex, entityIndex);
+                previousIndex = entityIndex;
+                if (portIndex < 0 || portIndex >= m_geometryModel.detectedPorts.size()) {
+                    continue;
+                }
+
+                ++portCount;
+                const DetectedPort &port = m_geometryModel.detectedPorts.at(portIndex);
+                auto *item = new QTreeWidgetItem(portsRoot);
+                item->setText(0, QStringLiteral("Port %1").arg(portCount));
+                item->setText(1, QStringLiteral("%1 mm").arg(QString::number(port.lengthMm, 'f', 3)));
+            }
+
+            if (lineCount == 0) {
+                linesRoot->setText(1, QStringLiteral("0"));
+            }
+            if (arcCount == 0) {
+                arcsRoot->setText(1, QStringLiteral("0"));
+            }
+            if (portCount == 0) {
+                portsRoot->setText(1, QStringLiteral("0"));
+            }
         }
     }
 

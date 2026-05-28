@@ -30,6 +30,7 @@ QJsonObject AppSettings::toJson() const
     QJsonObject json;
     json["defaultToleranceMm"] = defaultToleranceMm;
     json["toolStations"] = toolStationArray(toolStations);
+    json["lastDxfDirectory"] = lastDxfDirectory;
     json["viewBackgroundColor"] = colorToString(viewBackgroundColor);
     json["selectedEntityColor"] = colorToString(selectedEntityColor);
     json["hoverEntityColor"] = colorToString(hoverEntityColor);
@@ -61,6 +62,7 @@ AppSettings AppSettings::fromJson(const QJsonObject &json)
 {
     AppSettings settings;
     settings.defaultToleranceMm = json["defaultToleranceMm"].toDouble(settings.defaultToleranceMm);
+    settings.lastDxfDirectory = json["lastDxfDirectory"].toString();
     settings.viewBackgroundColor = colorFromJson(json["viewBackgroundColor"], settings.viewBackgroundColor);
     settings.selectedEntityColor = colorFromJson(json["selectedEntityColor"], settings.selectedEntityColor);
     settings.hoverEntityColor = colorFromJson(json["hoverEntityColor"], settings.hoverEntityColor);

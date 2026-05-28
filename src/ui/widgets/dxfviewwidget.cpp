@@ -306,6 +306,13 @@ void DxfViewWidget::setCandidateEntityIndexes(const QList<int> &entityIndexes)
     }
 }
 
+void DxfViewWidget::setHighlightedPortIndexes(const QList<int> &portIndexes)
+{
+    m_highlightedPortIndexes = portIndexes;
+    clearPortItems();
+    renderDetectedPorts();
+}
+
 void DxfViewWidget::setBladeLineGuide(const QPointF &startPoint,
                                       const QPointF &nextPoint,
                                       bool showArrow,
@@ -1049,10 +1056,13 @@ void DxfViewWidget::renderDetectedPorts()
         return;
     }
 
-    QPen pen(m_viewColors.portColor, 2.2, Qt::DashLine);
-    pen.setCosmetic(true);
-
-    for (const DetectedPort &port : std::as_const(m_detectedPorts)) {
+    for (int portIndex = 0; portIndex < m_detectedPorts.size(); ++portIndex) {
+        const DetectedPort &port = m_detectedPorts.at(portIndex);
+        const bool isHighlighted = m_highlightedPortIndexes.contains(portIndex);
+        QPen pen(m_viewColors.portColor,
+                 isHighlighted ? 3.6 : 2.2,
+                 isHighlighted ? Qt::SolidLine : Qt::DashLine);
+        pen.setCosmetic(true);
         QGraphicsItem *item = nullptr;
         if (port.type == DetectedPortType::Line) {
             item = m_scene->addLine(QLineF(modelToScenePoint(port.startPoint),

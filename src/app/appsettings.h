@@ -14,6 +14,7 @@ public:
     QList<ToolStation> toolStations = ToolStation::createDefaultStations();
     double defaultToleranceMm = 0.1;
     QStringList recentProjects;
+    QString lastDxfDirectory;
     QColor viewBackgroundColor = QColor(245, 245, 245);
     QColor selectedEntityColor = QColor(220, 40, 40);
     QColor hoverEntityColor = QColor(60, 120, 220);

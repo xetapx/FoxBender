@@ -48,6 +48,7 @@ public:
     void setBladeLineEntityIndexes(const QList<int> &entityIndexes);
     void setActiveBladeLineEntityIndexes(const QList<int> &entityIndexes);
     void setCandidateEntityIndexes(const QList<int> &entityIndexes);
+    void setHighlightedPortIndexes(const QList<int> &portIndexes);
     void setBladeLineGuide(const QPointF &startPoint,
                            const QPointF &nextPoint,
                            bool showArrow,
@@ -101,6 +102,7 @@ private:
     QList<int> m_bladeLineEntityIndexes;
     QList<int> m_activeBladeLineEntityIndexes;
     QList<int> m_candidateEntityIndexes;
+    QList<int> m_highlightedPortIndexes;
     ViewColors m_viewColors;
     QRectF m_viewSceneRect;
     int m_selectedEntityIndex = -1;
