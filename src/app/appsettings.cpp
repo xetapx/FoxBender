@@ -23,6 +23,25 @@ QJsonArray toolStationArray(const QList<ToolStation> &stations)
     }
     return array;
 }
+
+QJsonArray stringListToJsonArray(const QStringList &values)
+{
+    QJsonArray array;
+    for (const QString &value : values) {
+        array.append(value);
+    }
+    return array;
+}
+
+QStringList jsonArrayToStringList(const QJsonArray &array)
+{
+    QStringList values;
+    values.reserve(array.size());
+    for (const QJsonValue &value : array) {
+        values.append(value.toString());
+    }
+    return values;
+}
 }
 
 QJsonObject AppSettings::toJson() const
@@ -31,8 +50,10 @@ QJsonObject AppSettings::toJson() const
     json["defaultToleranceMm"] = defaultToleranceMm;
     json["toolStations"] = toolStationArray(toolStations);
     json["lastDxfDirectory"] = lastDxfDirectory;
+    json["hiddenLayers"] = stringListToJsonArray(hiddenLayers);
     json["viewBackgroundColor"] = colorToString(viewBackgroundColor);
     json["selectedEntityColor"] = colorToString(selectedEntityColor);
+    json["segmentSelectionColor"] = colorToString(segmentSelectionColor);
     json["hoverEntityColor"] = colorToString(hoverEntityColor);
     json["armedEntityColor"] = colorToString(armedEntityColor);
     json["bladeLineColor"] = colorToString(bladeLineColor);
@@ -47,8 +68,10 @@ QJsonObject AppSettings::toJson() const
     json["portColor"] = colorToString(portColor);
     json["fillFlags"] = fillFlags;
     json["flagScale"] = flagScale;
+    json["handleScale"] = handleScale;
     json["portMinLengthMm"] = portMinLengthMm;
     json["portMaxLengthMm"] = portMaxLengthMm;
+    json["recentDxfFiles"] = stringListToJsonArray(recentDxfFiles);
 
     QJsonArray recentProjectsArray;
     for (const QString &project : recentProjects) {
@@ -63,8 +86,24 @@ AppSettings AppSettings::fromJson(const QJsonObject &json)
     AppSettings settings;
     settings.defaultToleranceMm = json["defaultToleranceMm"].toDouble(settings.defaultToleranceMm);
     settings.lastDxfDirectory = json["lastDxfDirectory"].toString();
+    settings.hiddenLayers = jsonArrayToStringList(json["hiddenLayers"].toArray());
+    if (settings.hiddenLayers.isEmpty()) {
+        const QJsonObject legacyHiddenLayersByDxf = json["hiddenLayersByDxf"].toObject();
+        if (!legacyHiddenLayersByDxf.isEmpty()) {
+            if (!settings.lastDxfDirectory.isEmpty()
+                && legacyHiddenLayersByDxf.contains(settings.lastDxfDirectory)) {
+                settings.hiddenLayers =
+                    jsonArrayToStringList(legacyHiddenLayersByDxf.value(settings.lastDxfDirectory).toArray());
+            } else {
+                const QString firstKey = legacyHiddenLayersByDxf.keys().value(0);
+                settings.hiddenLayers =
+                    jsonArrayToStringList(legacyHiddenLayersByDxf.value(firstKey).toArray());
+            }
+        }
+    }
     settings.viewBackgroundColor = colorFromJson(json["viewBackgroundColor"], settings.viewBackgroundColor);
     settings.selectedEntityColor = colorFromJson(json["selectedEntityColor"], settings.selectedEntityColor);
+    settings.segmentSelectionColor = colorFromJson(json["segmentSelectionColor"], settings.segmentSelectionColor);
     settings.hoverEntityColor = colorFromJson(json["hoverEntityColor"], settings.hoverEntityColor);
     settings.armedEntityColor = colorFromJson(json["armedEntityColor"], settings.armedEntityColor);
     settings.bladeLineColor = colorFromJson(json["bladeLineColor"], settings.bladeLineColor);
@@ -81,6 +120,10 @@ AppSettings AppSettings::fromJson(const QJsonObject &json)
     settings.flagScale = json["flagScale"].toDouble(settings.flagScale);
     if (settings.flagScale < 0.5 || settings.flagScale > 3.0) {
         settings.flagScale = 1.0;
+    }
+    settings.handleScale = json["handleScale"].toDouble(settings.handleScale);
+    if (settings.handleScale < 0.5 || settings.handleScale > 3.0) {
+        settings.handleScale = 1.0;
     }
     settings.portMinLengthMm = json["portMinLengthMm"].toDouble(settings.portMinLengthMm);
     settings.portMaxLengthMm = json["portMaxLengthMm"].toDouble(settings.portMaxLengthMm);
@@ -100,11 +143,13 @@ AppSettings AppSettings::fromJson(const QJsonObject &json)
         }
     }
 
-    const QJsonArray projects = json["recentProjects"].toArray();
-    settings.recentProjects.clear();
-    settings.recentProjects.reserve(projects.size());
-    for (const QJsonValue &value : projects) {
-        settings.recentProjects.append(value.toString());
+    settings.recentDxfFiles = jsonArrayToStringList(json["recentDxfFiles"].toArray());
+    if (settings.recentDxfFiles.isEmpty()) {
+        settings.recentDxfFiles = jsonArrayToStringList(json["recentFiles"].toArray());
+    }
+    settings.recentProjects = jsonArrayToStringList(json["recentProjects"].toArray());
+    if (settings.recentDxfFiles.isEmpty() && !settings.recentProjects.isEmpty()) {
+        settings.recentDxfFiles = settings.recentProjects;
     }
 
     return settings;

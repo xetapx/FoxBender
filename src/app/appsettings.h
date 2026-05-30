@@ -13,10 +13,13 @@ class AppSettings
 public:
     QList<ToolStation> toolStations = ToolStation::createDefaultStations();
     double defaultToleranceMm = 0.1;
+    QStringList recentDxfFiles;
     QStringList recentProjects;
     QString lastDxfDirectory;
+    QStringList hiddenLayers;
     QColor viewBackgroundColor = QColor(245, 245, 245);
     QColor selectedEntityColor = QColor(220, 40, 40);
+    QColor segmentSelectionColor = QColor(255, 140, 0);
     QColor hoverEntityColor = QColor(60, 120, 220);
     QColor armedEntityColor = QColor(255, 140, 0);
     QColor bladeLineColor = QColor(20, 150, 90);
@@ -31,6 +34,7 @@ public:
     QColor portColor = QColor(230, 40, 140);
     bool fillFlags = true;
     double flagScale = 1.0;
+    double handleScale = 1.0;
     double portMinLengthMm = 2.0;
     double portMaxLengthMm = 6.0;
 

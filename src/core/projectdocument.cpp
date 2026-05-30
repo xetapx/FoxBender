@@ -62,8 +62,8 @@ QJsonObject ProjectDocument::toJson() const
     QJsonObject json;
     json["projectVersion"] = projectVersion;
     json["dxfFilePath"] = dxfFilePath;
-    json["bladeLines"] = toJsonArrayOfArrays(bladeLines);
-    json["activeBladeLineIndex"] = activeBladeLineIndex;
+    json["ruleProfiles"] = toJsonArrayOfArrays(ruleProfiles);
+    json["activeRuleProfileIndex"] = activeRuleProfileIndex;
     json["layerAssignments"] = toJsonArray(layerAssignments);
     json["features"] = toJsonArray(features);
     json["modifiers"] = toJsonArray(modifiers);
@@ -78,16 +78,20 @@ ProjectDocument ProjectDocument::fromJson(const QJsonObject &json)
     ProjectDocument document;
     document.projectVersion = json["projectVersion"].toInt(1);
     document.dxfFilePath = json["dxfFilePath"].toString();
-    document.bladeLines = fromJsonArrayOfArrays(json["bladeLines"].toArray());
-    if (document.bladeLines.isEmpty()) {
-        const QStringList legacyBladeLine = fromJsonArray(json["bladeLinePaths"].toArray());
-        if (!legacyBladeLine.isEmpty()) {
-            document.bladeLines.append(legacyBladeLine);
+    document.ruleProfiles = fromJsonArrayOfArrays(json["ruleProfiles"].toArray());
+    if (document.ruleProfiles.isEmpty()) {
+        document.ruleProfiles = fromJsonArrayOfArrays(json["bladeLines"].toArray());
+    }
+    if (document.ruleProfiles.isEmpty()) {
+        const QStringList legacyRuleProfile = fromJsonArray(json["bladeLinePaths"].toArray());
+        if (!legacyRuleProfile.isEmpty()) {
+            document.ruleProfiles.append(legacyRuleProfile);
         }
     }
-    document.activeBladeLineIndex = json["activeBladeLineIndex"].toInt(0);
-    if (document.activeBladeLineIndex < 0 || document.activeBladeLineIndex >= document.bladeLines.size()) {
-        document.activeBladeLineIndex = document.bladeLines.isEmpty() ? 0 : document.bladeLines.size() - 1;
+    document.activeRuleProfileIndex = json["activeRuleProfileIndex"].toInt(
+        json["activeBladeLineIndex"].toInt(0));
+    if (document.activeRuleProfileIndex < 0 || document.activeRuleProfileIndex >= document.ruleProfiles.size()) {
+        document.activeRuleProfileIndex = document.ruleProfiles.isEmpty() ? 0 : document.ruleProfiles.size() - 1;
     }
     document.layerAssignments = fromJsonArray(json["layerAssignments"].toArray());
     document.features = fromJsonArray(json["features"].toArray());

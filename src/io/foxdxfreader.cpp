@@ -4,6 +4,7 @@
 #include "third_party/libdxfrw/src/libdxfrw.h"
 
 #include <QFileInfo>
+#include <QLineF>
 #include <QtMath>
 
 namespace
@@ -42,6 +43,16 @@ QPointF toPointF(const DRW_Coord &point)
     return {point.x, point.y};
 }
 
+QPointF toPointF(const DRW_Vertex2D &vertex)
+{
+    return {vertex.x, vertex.y};
+}
+
+QPointF toPointF(const DRW_Vertex &vertex)
+{
+    return {vertex.basePoint.x, vertex.basePoint.y};
+}
+
 QString handleString(duint32 handle)
 {
     return handle == 0
@@ -69,13 +80,111 @@ public:
     DxfDocument document;
     int nextEntityOrdinal = 1;
 
-    void assignIdentity(DxfEntity &entity, duint32 handle)
+    void assignIdentity(DxfEntity &entity, duint32 handle, const QString &suffix = {})
     {
         entity.sourceHandle = handleString(handle);
-        entity.id = QStringLiteral("%1_%2_h%3")
+        entity.id = QStringLiteral("%1_%2_h%3%4")
                         .arg(entityTypeToken(entity.type))
                         .arg(nextEntityOrdinal++, 6, 10, QChar('0'))
-                        .arg(entity.sourceHandle);
+                        .arg(entity.sourceHandle)
+                        .arg(suffix);
+    }
+
+    void appendPolylineSegment(const QPointF &startPoint,
+                               const QPointF &endPoint,
+                               double bulge,
+                               duint32 handle,
+                               const QString &layerName,
+                               const QColor &color,
+                               int segmentIndex)
+    {
+        if (QLineF(startPoint, endPoint).length() <= 1e-9) {
+            return;
+        }
+
+        if (qAbs(bulge) <= 1e-9) {
+            DxfEntity entity;
+            entity.type = DxfEntityType::Line;
+            assignIdentity(entity, handle, QStringLiteral("_s%1").arg(segmentIndex + 1));
+            entity.layerName = layerName;
+            entity.color = color;
+            entity.points = {startPoint, endPoint};
+            document.entities.append(entity);
+            return;
+        }
+
+        const double thetaRad = 4.0 * std::atan(bulge);
+        const double halfThetaRad = thetaRad * 0.5;
+        const double chordLength = QLineF(startPoint, endPoint).length();
+        const double sinHalfTheta = std::sin(std::abs(halfThetaRad));
+        if (qFuzzyIsNull(sinHalfTheta)) {
+            DxfEntity entity;
+            entity.type = DxfEntityType::Line;
+            assignIdentity(entity, handle, QStringLiteral("_s%1").arg(segmentIndex + 1));
+            entity.layerName = layerName;
+            entity.color = color;
+            entity.points = {startPoint, endPoint};
+            document.entities.append(entity);
+            return;
+        }
+
+        const double radius = chordLength / (2.0 * sinHalfTheta);
+        const QPointF chordVector = endPoint - startPoint;
+        const QPointF chordUnit = chordVector / chordLength;
+        const QPointF leftNormal(-chordUnit.y(), chordUnit.x());
+        const QPointF midPoint = (startPoint + endPoint) * 0.5;
+        const double centerOffset = chordLength * (1.0 - bulge * bulge) / (4.0 * bulge);
+        const QPointF center = midPoint + leftNormal * centerOffset;
+
+        DxfEntity entity;
+        entity.type = DxfEntityType::Arc;
+        assignIdentity(entity, handle, QStringLiteral("_s%1").arg(segmentIndex + 1));
+        entity.layerName = layerName;
+        entity.color = color;
+        entity.center = center;
+        entity.radius = radius;
+
+        const double startAngleDeg =
+            qRadiansToDegrees(std::atan2(startPoint.y() - center.y(), startPoint.x() - center.x()));
+        const double endAngleDeg =
+            qRadiansToDegrees(std::atan2(endPoint.y() - center.y(), endPoint.x() - center.x()));
+
+        if (bulge > 0.0) {
+            entity.startAngleDeg = startAngleDeg;
+            entity.endAngleDeg = endAngleDeg;
+        } else {
+            entity.startAngleDeg = endAngleDeg;
+            entity.endAngleDeg = startAngleDeg;
+        }
+
+        document.entities.append(entity);
+    }
+
+    template <typename VertexPtr>
+    void appendExplodedPolyline(const std::vector<VertexPtr> &vertices,
+                                bool closed,
+                                duint32 handle,
+                                const QString &layerName,
+                                const QColor &color)
+    {
+        if (vertices.size() < 2) {
+            return;
+        }
+
+        const int segmentCount = closed ? static_cast<int>(vertices.size())
+                                        : static_cast<int>(vertices.size()) - 1;
+        for (int segmentIndex = 0; segmentIndex < segmentCount; ++segmentIndex) {
+            const int nextIndex = (segmentIndex + 1) % static_cast<int>(vertices.size());
+            const auto &startVertex = vertices.at(segmentIndex);
+            const auto &endVertex = vertices.at(nextIndex);
+            appendPolylineSegment(toPointF(*startVertex),
+                                  toPointF(*endVertex),
+                                  startVertex->bulge,
+                                  handle,
+                                  layerName,
+                                  color,
+                                  segmentIndex);
+        }
     }
 
     void addHeader(const DRW_Header * /*data*/) override {}
@@ -177,28 +286,20 @@ public:
 
     void addLWPolyline(const DRW_LWPolyline &data) override
     {
-        DxfEntity entity;
-        entity.type = DxfEntityType::Polyline;
-        assignIdentity(entity, data.handle);
-        entity.layerName = toQString(data.layer);
-        entity.color = resolveColor(data.color24, data.color);
-        for (const auto &vertex : data.vertlist) {
-            entity.points.append(QPointF(vertex->x, vertex->y));
-        }
-        document.entities.append(entity);
+        appendExplodedPolyline(data.vertlist,
+                               (data.flags & 0x01) != 0,
+                               data.handle,
+                               toQString(data.layer),
+                               resolveColor(data.color24, data.color));
     }
 
     void addPolyline(const DRW_Polyline &data) override
     {
-        DxfEntity entity;
-        entity.type = DxfEntityType::Polyline;
-        assignIdentity(entity, data.handle);
-        entity.layerName = toQString(data.layer);
-        entity.color = resolveColor(data.color24, data.color);
-        for (const auto &vertex : data.vertlist) {
-            entity.points.append(toPointF(vertex->basePoint));
-        }
-        document.entities.append(entity);
+        appendExplodedPolyline(data.vertlist,
+                               (data.flags & 0x01) != 0,
+                               data.handle,
+                               toQString(data.layer),
+                               resolveColor(data.color24, data.color));
     }
 };
 }

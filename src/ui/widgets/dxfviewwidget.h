@@ -25,10 +25,11 @@ public:
     {
         QColor backgroundColor = QColor(245, 245, 245);
         QColor selectedEntityColor = QColor(220, 40, 40);
+        QColor segmentSelectionColor = QColor(255, 140, 0);
         QColor hoverEntityColor = QColor(60, 120, 220);
         QColor armedEntityColor = QColor(255, 140, 0);
-        QColor bladeLineColor = QColor(20, 150, 90);
-        QColor activeBladeLineColor = QColor(0, 170, 110);
+        QColor ruleProfileColor = QColor(20, 150, 90);
+        QColor activeRuleProfileColor = QColor(0, 170, 110);
         QColor handleColor = QColor(220, 40, 40);
         QColor handleHoverColor = QColor(40, 120, 220);
         QColor handleHoverFillColor = QColor(120, 170, 240);
@@ -39,24 +40,30 @@ public:
         QColor portColor = QColor(230, 40, 140);
         bool fillFlags = true;
         double flagScale = 1.0;
+        double handleScale = 1.0;
     };
 
     explicit DxfViewWidget(QWidget *parent = nullptr);
     void setDocument(const DxfDocument &document);
     void setDocument(const DxfDocument &document, bool fitView);
     void setArmedEntityIndex(int entityIndex);
-    void setBladeLineEntityIndexes(const QList<int> &entityIndexes);
-    void setActiveBladeLineEntityIndexes(const QList<int> &entityIndexes);
+    void setRuleProfileEntityIndexes(const QList<int> &entityIndexes);
+    void setActiveRuleProfileEntityIndexes(const QList<int> &entityIndexes);
     void setCandidateEntityIndexes(const QList<int> &entityIndexes);
+    void setTreeSelectionEntityIndexes(const QList<int> &entityIndexes);
     void setHighlightedPortIndexes(const QList<int> &portIndexes);
-    void setBladeLineGuide(const QPointF &startPoint,
-                           const QPointF &nextPoint,
-                           bool showArrow,
-                           const QPointF &openPoint,
-                           bool showOpenPoint);
+    void setTreeSelectionPortIndexes(const QList<int> &portIndexes);
+    void setHoveredCandidateEntityIndexes(const QList<int> &entityIndexes);
+    void setHoveredPortIndexes(const QList<int> &portIndexes);
+    void setRuleProfileGuide(const QPointF &startPoint,
+                             const QPointF &nextPoint,
+                             bool showArrow,
+                             const QPointF &openPoint,
+                             bool showOpenPoint);
     void setDetectedPorts(const QList<DetectedPort> &ports);
     void setViewColors(const ViewColors &colors);
     void setBreakPreviewEnabled(bool enabled);
+    void setPendingTrimPreview(const QPointF &modelPoint, bool visible);
     void selectEntityIndex(int entityIndex);
     const DxfDocument &document() const;
     int selectedEntityIndex() const;
@@ -87,22 +94,28 @@ private:
     void clearHandles();
     void clearSnapPreview();
     void clearBreakPreview();
-    void clearBladeLineGuide();
+    void clearPendingTrimPreview();
+    void clearRuleProfileGuide();
     void clearPortItems();
-    void renderBladeLineGuide();
+    void renderRuleProfileGuide();
     void renderDetectedPorts();
+    QGraphicsItem *findEntityItemAt(const QPoint &viewPos, int radiusPixels = 6) const;
     QGraphicsItem *findHandleItemAt(const QPoint &viewPos) const;
-    QPointF closestPointOnLineEntity(int entityIndex, const QPointF &scenePos) const;
+    QPointF closestPointOnBreakEntity(int entityIndex, const QPointF &scenePos) const;
     void updateItemSelectionStyle(QGraphicsItem *item);
     void updateEntityFromHandleDrag(int entityIndex, int handleType, int handleIndex, const QPointF &deltaScene);
     bool snapDraggedHandle(int entityIndex, int handleType, int handleIndex, QPointF *snapPoint);
 
     QGraphicsScene *m_scene;
     DxfDocument m_document;
-    QList<int> m_bladeLineEntityIndexes;
-    QList<int> m_activeBladeLineEntityIndexes;
+    QList<int> m_ruleProfileEntityIndexes;
+    QList<int> m_activeRuleProfileEntityIndexes;
     QList<int> m_candidateEntityIndexes;
+    QList<int> m_treeSelectionEntityIndexes;
     QList<int> m_highlightedPortIndexes;
+    QList<int> m_treeSelectionPortIndexes;
+    QList<int> m_hoveredCandidateEntityIndexes;
+    QList<int> m_hoveredPortIndexes;
     ViewColors m_viewColors;
     QRectF m_viewSceneRect;
     int m_selectedEntityIndex = -1;
@@ -111,7 +124,7 @@ private:
     bool m_isPanning = false;
     QPointF m_lastPanScenePos;
     QList<QGraphicsItem *> m_handleItems;
-    QList<QGraphicsItem *> m_bladeLineGuideItems;
+    QList<QGraphicsItem *> m_ruleProfileGuideItems;
     QList<QGraphicsItem *> m_portItems;
     QList<DetectedPort> m_detectedPorts;
     int m_hoveredHandleEntityIndex = -1;
@@ -119,6 +132,7 @@ private:
     int m_hoveredHandleIndex = -1;
     QGraphicsEllipseItem *m_snapPreviewItem = nullptr;
     QGraphicsEllipseItem *m_breakPreviewItem = nullptr;
+    QGraphicsEllipseItem *m_pendingTrimPreviewItem = nullptr;
     bool m_isDraggingHandle = false;
     int m_dragHandleEntityIndex = -1;
     int m_dragHandleType = -1;
@@ -128,11 +142,11 @@ private:
     QRectF m_dragSceneRect;
     DxfDocument m_documentBeforeEdit;
     bool m_breakPreviewEnabled = false;
-    bool m_showBladeLineGuideArrow = false;
-    bool m_showBladeLineOpenPoint = false;
-    QPointF m_bladeLineGuideStartPoint;
-    QPointF m_bladeLineGuideNextPoint;
-    QPointF m_bladeLineOpenPoint;
+    bool m_showRuleProfileGuideArrow = false;
+    bool m_showRuleProfileOpenPoint = false;
+    QPointF m_ruleProfileGuideStartPoint;
+    QPointF m_ruleProfileGuideNextPoint;
+    QPointF m_ruleProfileOpenPoint;
 };
 
 #endif // FOXBENDER_DXFVIEWWIDGET_H

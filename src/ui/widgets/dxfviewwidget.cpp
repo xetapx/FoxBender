@@ -15,6 +15,7 @@
 #include <QScrollBar>
 #include <QStyleOptionGraphicsItem>
 #include <QTransform>
+#include <limits>
 #include <QtMath>
 #include <QWheelEvent>
 
@@ -48,6 +49,85 @@ QPointF arcPointAtAngle(const QPointF &center, double radius, double angleDeg)
     const double angleRad = qDegreesToRadians(angleDeg);
     return QPointF(center.x() + radius * qCos(angleRad),
                    center.y() + radius * qSin(angleRad));
+}
+
+double normalizeAngle360(double angleDeg)
+{
+    while (angleDeg < 0.0) {
+        angleDeg += 360.0;
+    }
+    while (angleDeg >= 360.0) {
+        angleDeg -= 360.0;
+    }
+    return angleDeg;
+}
+
+double distancePointToSegment(const QPointF &point, const QPointF &start, const QPointF &end)
+{
+    const QLineF segment(start, end);
+    const double lengthSquared = segment.length() * segment.length();
+    if (qFuzzyIsNull(lengthSquared)) {
+        return QLineF(point, start).length();
+    }
+
+    const QPointF segmentVector = end - start;
+    const double t = qBound(0.0,
+                            ((point.x() - start.x()) * segmentVector.x()
+                             + (point.y() - start.y()) * segmentVector.y()) / lengthSquared,
+                            1.0);
+    const QPointF projection(start.x() + segmentVector.x() * t,
+                             start.y() + segmentVector.y() * t);
+    return QLineF(point, projection).length();
+}
+
+bool angleWithinArcSweep(double angleDeg, double startDeg, double endDeg)
+{
+    const double normalizedAngle = normalizeAngle360(angleDeg);
+    const double normalizedStart = normalizeAngle360(startDeg);
+    double normalizedEnd = normalizeAngle360(endDeg);
+    while (normalizedEnd < normalizedStart) {
+        normalizedEnd += 360.0;
+    }
+
+    double candidateAngle = normalizedAngle;
+    while (candidateAngle < normalizedStart) {
+        candidateAngle += 360.0;
+    }
+    return candidateAngle >= normalizedStart && candidateAngle <= normalizedEnd;
+}
+
+double distanceToEntity(const DxfEntity &entity, const QPointF &modelPoint)
+{
+    if (entity.type == DxfEntityType::Line && entity.points.size() >= 2) {
+        return distancePointToSegment(modelPoint, entity.points.at(0), entity.points.at(1));
+    }
+
+    if (entity.type == DxfEntityType::Polyline && entity.points.size() >= 2) {
+        double bestDistance = std::numeric_limits<double>::max();
+        for (int index = 1; index < entity.points.size(); ++index) {
+            bestDistance = qMin(bestDistance,
+                                distancePointToSegment(modelPoint,
+                                                       entity.points.at(index - 1),
+                                                       entity.points.at(index)));
+        }
+        return bestDistance;
+    }
+
+    if (entity.type == DxfEntityType::Arc && entity.radius > 0.0) {
+        const double pointAngleDeg = qRadiansToDegrees(qAtan2(modelPoint.y() - entity.center.y(),
+                                                              modelPoint.x() - entity.center.x()));
+        const double radialDistance = qAbs(QLineF(modelPoint, entity.center).length() - entity.radius);
+        if (angleWithinArcSweep(pointAngleDeg, entity.startAngleDeg, entity.endAngleDeg)) {
+            return radialDistance;
+        }
+
+        const QPointF startPoint = arcPointAtAngle(entity.center, entity.radius, entity.startAngleDeg);
+        const QPointF endPoint = arcPointAtAngle(entity.center, entity.radius, entity.endAngleDeg);
+        return qMin(QLineF(modelPoint, startPoint).length(),
+                    QLineF(modelPoint, endPoint).length());
+    }
+
+    return std::numeric_limits<double>::max();
 }
 
 QPointF entityMidPoint(const DxfEntity &entity)
@@ -131,6 +211,16 @@ bool setArcEndpointWithFixedOpposite(DxfEntity &entity, int handleIndex, const Q
                                                     newStartPoint.x() - center.x()));
     entity.endAngleDeg = qRadiansToDegrees(qAtan2(newEndPoint.y() - center.y(),
                                                   newEndPoint.x() - center.x()));
+    return true;
+}
+
+bool isLayerVisible(const DxfDocument &document, const QString &layerName)
+{
+    for (const LayerDefinition &layer : document.layers) {
+        if (layer.name == layerName) {
+            return layer.visible;
+        }
+    }
     return true;
 }
 
@@ -254,7 +344,8 @@ void DxfViewWidget::setDocument(const DxfDocument &document, bool fitView)
     clearHandles();
     clearSnapPreview();
     clearBreakPreview();
-    clearBladeLineGuide();
+    clearPendingTrimPreview();
+    clearRuleProfileGuide();
     renderDocument(fitView);
 }
 
@@ -270,9 +361,9 @@ void DxfViewWidget::setArmedEntityIndex(int entityIndex)
     }
 }
 
-void DxfViewWidget::setBladeLineEntityIndexes(const QList<int> &entityIndexes)
+void DxfViewWidget::setRuleProfileEntityIndexes(const QList<int> &entityIndexes)
 {
-    m_bladeLineEntityIndexes = entityIndexes;
+    m_ruleProfileEntityIndexes = entityIndexes;
 
     const QList<QGraphicsItem *> items = m_scene->items();
     for (QGraphicsItem *item : items) {
@@ -282,9 +373,9 @@ void DxfViewWidget::setBladeLineEntityIndexes(const QList<int> &entityIndexes)
     }
 }
 
-void DxfViewWidget::setActiveBladeLineEntityIndexes(const QList<int> &entityIndexes)
+void DxfViewWidget::setActiveRuleProfileEntityIndexes(const QList<int> &entityIndexes)
 {
-    m_activeBladeLineEntityIndexes = entityIndexes;
+    m_activeRuleProfileEntityIndexes = entityIndexes;
 
     const QList<QGraphicsItem *> items = m_scene->items();
     for (QGraphicsItem *item : items) {
@@ -306,6 +397,18 @@ void DxfViewWidget::setCandidateEntityIndexes(const QList<int> &entityIndexes)
     }
 }
 
+void DxfViewWidget::setTreeSelectionEntityIndexes(const QList<int> &entityIndexes)
+{
+    m_treeSelectionEntityIndexes = entityIndexes;
+
+    const QList<QGraphicsItem *> items = m_scene->items();
+    for (QGraphicsItem *item : items) {
+        if (item->data(EntityIndexRole).isValid()) {
+            updateItemSelectionStyle(item);
+        }
+    }
+}
+
 void DxfViewWidget::setHighlightedPortIndexes(const QList<int> &portIndexes)
 {
     m_highlightedPortIndexes = portIndexes;
@@ -313,20 +416,46 @@ void DxfViewWidget::setHighlightedPortIndexes(const QList<int> &portIndexes)
     renderDetectedPorts();
 }
 
-void DxfViewWidget::setBladeLineGuide(const QPointF &startPoint,
-                                      const QPointF &nextPoint,
-                                      bool showArrow,
-                                      const QPointF &openPoint,
-                                      bool showOpenPoint)
+void DxfViewWidget::setTreeSelectionPortIndexes(const QList<int> &portIndexes)
 {
-    m_bladeLineGuideStartPoint = startPoint;
-    m_bladeLineGuideNextPoint = nextPoint;
-    m_showBladeLineGuideArrow = showArrow;
-    m_bladeLineOpenPoint = openPoint;
-    m_showBladeLineOpenPoint = showOpenPoint;
+    m_treeSelectionPortIndexes = portIndexes;
+    clearPortItems();
+    renderDetectedPorts();
+}
 
-    clearBladeLineGuide();
-    renderBladeLineGuide();
+void DxfViewWidget::setHoveredCandidateEntityIndexes(const QList<int> &entityIndexes)
+{
+    m_hoveredCandidateEntityIndexes = entityIndexes;
+
+    const QList<QGraphicsItem *> items = m_scene->items();
+    for (QGraphicsItem *item : items) {
+        if (item->data(EntityIndexRole).isValid()) {
+            updateItemSelectionStyle(item);
+        }
+    }
+}
+
+void DxfViewWidget::setHoveredPortIndexes(const QList<int> &portIndexes)
+{
+    m_hoveredPortIndexes = portIndexes;
+    clearPortItems();
+    renderDetectedPorts();
+}
+
+void DxfViewWidget::setRuleProfileGuide(const QPointF &startPoint,
+                                        const QPointF &nextPoint,
+                                        bool showArrow,
+                                        const QPointF &openPoint,
+                                        bool showOpenPoint)
+{
+    m_ruleProfileGuideStartPoint = startPoint;
+    m_ruleProfileGuideNextPoint = nextPoint;
+    m_showRuleProfileGuideArrow = showArrow;
+    m_ruleProfileOpenPoint = openPoint;
+    m_showRuleProfileOpenPoint = showOpenPoint;
+
+    clearRuleProfileGuide();
+    renderRuleProfileGuide();
 }
 
 void DxfViewWidget::setDetectedPorts(const QList<DetectedPort> &ports)
@@ -348,8 +477,8 @@ void DxfViewWidget::setViewColors(const ViewColors &colors)
         }
     }
 
-    clearBladeLineGuide();
-    renderBladeLineGuide();
+    clearRuleProfileGuide();
+    renderRuleProfileGuide();
     clearPortItems();
     renderDetectedPorts();
 }
@@ -360,6 +489,25 @@ void DxfViewWidget::setBreakPreviewEnabled(bool enabled)
     if (!enabled) {
         clearBreakPreview();
     }
+}
+
+void DxfViewWidget::setPendingTrimPreview(const QPointF &modelPoint, bool visible)
+{
+    clearPendingTrimPreview();
+    if (!visible || m_scene == nullptr) {
+        return;
+    }
+
+    const QPointF scenePoint = modelToScenePoint(modelPoint);
+    m_pendingTrimPreviewItem = m_scene->addEllipse(-4.0,
+                                                   -4.0,
+                                                   8.0,
+                                                   8.0,
+                                                   QPen(m_viewColors.hoverEntityColor, 1.4),
+                                                   QBrush(Qt::white));
+    m_pendingTrimPreviewItem->setPos(scenePoint);
+    m_pendingTrimPreviewItem->setFlag(QGraphicsItem::ItemIgnoresTransformations, true);
+    m_pendingTrimPreviewItem->setZValue(12.5);
 }
 
 void DxfViewWidget::selectEntityIndex(int entityIndex)
@@ -428,7 +576,7 @@ void DxfViewWidget::mousePressEvent(QMouseEvent *event)
         return;
     }
 
-    if (event->button() == Qt::LeftButton) {
+    if (event->button() == Qt::LeftButton && !m_breakPreviewEnabled) {
         if (QGraphicsItem *item = findHandleItemAt(event->pos())) {
             if (item->data(HandleTypeRole).isValid()) {
                 m_isDraggingHandle = true;
@@ -447,7 +595,7 @@ void DxfViewWidget::mousePressEvent(QMouseEvent *event)
     }
 
     if (event->button() == Qt::LeftButton) {
-        if (QGraphicsItem *item = itemAt(event->pos())) {
+        if (QGraphicsItem *item = findEntityItemAt(event->pos(), 7)) {
             if (item->data(EntityIndexRole).isValid() && !item->data(HandleTypeRole).isValid()) {
                 emit entityClicked(item->data(EntityIndexRole).toInt(),
                                    sceneToModelPoint(mapToScene(event->pos())));
@@ -528,15 +676,16 @@ void DxfViewWidget::mouseMoveEvent(QMouseEvent *event)
 
     if (m_breakPreviewEnabled && m_armedEntityIndex >= 0) {
         clearBreakPreview();
-        if (QGraphicsItem *item = itemAt(event->pos())) {
+        if (QGraphicsItem *item = findEntityItemAt(event->pos(), 7)) {
             if (item->data(EntityIndexRole).isValid()
                 && !item->data(HandleTypeRole).isValid()
                 && item->data(EntityIndexRole).toInt() == m_armedEntityIndex) {
                 const QPointF snapPoint = modelToScenePoint(
-                    closestPointOnLineEntity(m_armedEntityIndex,
-                                             sceneToModelPoint(mapToScene(event->pos()))));
+                    closestPointOnBreakEntity(m_armedEntityIndex,
+                                              sceneToModelPoint(mapToScene(event->pos()))));
                 const DxfEntity &entity = m_document.entities.at(m_armedEntityIndex);
-                if (entity.type == DxfEntityType::Line && entity.points.size() == 2) {
+                if ((entity.type == DxfEntityType::Line && entity.points.size() == 2)
+                    || entity.type == DxfEntityType::Arc) {
                     m_breakPreviewItem = m_scene->addEllipse(snapPoint.x() - 3.0,
                                                              snapPoint.y() - 3.0,
                                                              6.0,
@@ -550,7 +699,7 @@ void DxfViewWidget::mouseMoveEvent(QMouseEvent *event)
     }
 
     int hoveredEntityIndex = -1;
-    if (QGraphicsItem *item = itemAt(event->pos())) {
+    if (QGraphicsItem *item = findEntityItemAt(event->pos(), 7)) {
         if (item->data(EntityIndexRole).isValid() && !item->data(HandleTypeRole).isValid()) {
             hoveredEntityIndex = item->data(EntityIndexRole).toInt();
         }
@@ -651,10 +800,11 @@ void DxfViewWidget::handleSceneSelectionChanged()
     clearHandles();
     clearSnapPreview();
     clearBreakPreview();
+    clearPendingTrimPreview();
     if (m_selectedEntityIndex >= 0) {
         renderHandlesForEntity(m_selectedEntityIndex);
     }
-    renderBladeLineGuide();
+    renderRuleProfileGuide();
 
     emit entitySelected(m_selectedEntityIndex);
 }
@@ -663,7 +813,7 @@ void DxfViewWidget::renderDocument(bool fitView)
 {
     m_scene->clear();
     m_handleItems.clear();
-    m_bladeLineGuideItems.clear();
+    m_ruleProfileGuideItems.clear();
     m_portItems.clear();
     m_snapPreviewItem = nullptr;
     m_breakPreviewItem = nullptr;
@@ -691,6 +841,9 @@ void DxfViewWidget::renderDocument(bool fitView)
 
     for (int entityIndex = 0; entityIndex < m_document.entities.size(); ++entityIndex) {
         const DxfEntity &entity = m_document.entities.at(entityIndex);
+        if (!isLayerVisible(m_document, entity.layerName)) {
+            continue;
+        }
         const QPen pen(entity.color, 0.0);
         QGraphicsItem *graphicsItem = nullptr;
 
@@ -746,7 +899,7 @@ void DxfViewWidget::renderDocument(bool fitView)
     label->setFlag(QGraphicsItem::ItemIgnoresTransformations, true);
     label->setPos(m_scene->sceneRect().left(), m_scene->sceneRect().top());
 
-    renderBladeLineGuide();
+    renderRuleProfileGuide();
 
     if (fitView) {
         fitAll();
@@ -757,27 +910,34 @@ void DxfViewWidget::updateItemSelectionStyle(QGraphicsItem *item)
 {
     const QColor baseColor = item->data(EntityColorRole).value<QColor>();
     const int entityIndex = item->data(EntityIndexRole).toInt();
-    const bool isBladeLineEntity = m_bladeLineEntityIndexes.contains(entityIndex);
-    const bool isActiveBladeLineEntity = m_activeBladeLineEntityIndexes.contains(entityIndex);
+    const bool isRuleProfileEntity = m_ruleProfileEntityIndexes.contains(entityIndex);
+    const bool isActiveRuleProfileEntity = m_activeRuleProfileEntityIndexes.contains(entityIndex);
     const bool isCandidateEntity = m_candidateEntityIndexes.contains(entityIndex);
+    const bool isTreeSelectedEntity = m_treeSelectionEntityIndexes.contains(entityIndex);
+    const bool isHoveredCandidateEntity = m_hoveredCandidateEntityIndexes.contains(entityIndex);
     const bool isArmed = entityIndex == m_armedEntityIndex;
     const bool isHovered = entityIndex == m_hoveredEntityIndex;
     const QColor activeColor = item->isSelected()
                                    ? m_viewColors.selectedEntityColor
+                                   : isTreeSelectedEntity ? m_viewColors.segmentSelectionColor
                                    : isArmed ? m_viewColors.armedEntityColor
+                                   : isHoveredCandidateEntity ? m_viewColors.hoverEntityColor
                                    : isCandidateEntity ? m_viewColors.armedEntityColor
-                                   : isActiveBladeLineEntity ? m_viewColors.activeBladeLineColor
-                                   : isBladeLineEntity ? m_viewColors.bladeLineColor
+                                   : isActiveRuleProfileEntity ? m_viewColors.activeRuleProfileColor
+                                   : isRuleProfileEntity ? m_viewColors.ruleProfileColor
                                    : isHovered ? m_viewColors.hoverEntityColor
                                                : baseColor;
     const qreal width = item->isSelected() ? 1.8
+                        : isTreeSelectedEntity ? 2.6
                         : isArmed ? 1.4
+                        : isHoveredCandidateEntity ? 1.8
                         : isCandidateEntity ? 1.4
-                        : isActiveBladeLineEntity ? 1.8
-                        : isBladeLineEntity ? 1.4
+                        : isActiveRuleProfileEntity ? 1.8
+                        : isRuleProfileEntity ? 1.4
                         : isHovered ? 1.2
                                     : 0.0;
-    const QPen pen(activeColor, width);
+    QPen pen(activeColor, width);
+    pen.setCosmetic(true);
 
     if (auto *lineItem = qgraphicsitem_cast<QGraphicsLineItem *>(item)) {
         lineItem->setPen(pen);
@@ -797,6 +957,9 @@ void DxfViewWidget::renderHandlesForEntity(int entityIndex)
 
     const DxfEntity &entity = m_document.entities.at(entityIndex);
     QVector<QPointF> handlePoints = entity.points;
+    const qreal handleScale = std::clamp(m_viewColors.handleScale, 0.5, 3.0);
+    const qreal pointHalfSize = 2.5 * handleScale;
+    const qreal midRadius = 3.0 * handleScale;
 
     if (entity.type == DxfEntityType::Arc) {
         handlePoints.clear();
@@ -812,13 +975,15 @@ void DxfViewWidget::renderHandlesForEntity(int entityIndex)
 
     for (const QPointF &point : handlePoints) {
         const QPointF scenePoint = modelToScenePoint(point);
-        auto *handle = m_scene->addRect(scenePoint.x() - 2.5,
-                                        scenePoint.y() - 2.5,
-                                        5.0,
-                                        5.0,
+        auto *handle = m_scene->addRect(-pointHalfSize,
+                                        -pointHalfSize,
+                                        pointHalfSize * 2.0,
+                                        pointHalfSize * 2.0,
                                         QPen(m_viewColors.handleColor, 0.0),
                                         QBrush(Qt::NoBrush));
         handle->setFlag(QGraphicsItem::ItemIsSelectable, false);
+        handle->setFlag(QGraphicsItem::ItemIgnoresTransformations, true);
+        handle->setPos(scenePoint);
         handle->setData(EntityIndexRole, entityIndex);
         handle->setData(HandleTypeRole, HandleTypePoint);
         handle->setData(HandleIndexRole, handlePoints.indexOf(point));
@@ -827,13 +992,15 @@ void DxfViewWidget::renderHandlesForEntity(int entityIndex)
     }
 
     const QPointF sceneMidPoint = modelToScenePoint(entityMidPoint(entity));
-    auto *midHandle = m_scene->addEllipse(sceneMidPoint.x() - 3.0,
-                                          sceneMidPoint.y() - 3.0,
-                                          6.0,
-                                          6.0,
+    auto *midHandle = m_scene->addEllipse(-midRadius,
+                                          -midRadius,
+                                          midRadius * 2.0,
+                                          midRadius * 2.0,
                                           QPen(m_viewColors.handleColor, 0.0),
                                           QBrush(Qt::NoBrush));
     midHandle->setFlag(QGraphicsItem::ItemIsSelectable, false);
+    midHandle->setFlag(QGraphicsItem::ItemIgnoresTransformations, true);
+    midHandle->setPos(sceneMidPoint);
     midHandle->setData(EntityIndexRole, entityIndex);
     midHandle->setData(HandleTypeRole, HandleTypeMid);
     midHandle->setData(HandleIndexRole, -1);
@@ -865,6 +1032,46 @@ void DxfViewWidget::updateHandleHoverStyles()
             rect->setBrush(isHovered ? QBrush(m_viewColors.handleHoverFillColor) : QBrush(Qt::NoBrush));
         }
     }
+}
+
+QGraphicsItem *DxfViewWidget::findEntityItemAt(const QPoint &viewPos, int radiusPixels) const
+{
+    const int radius = qMax(0, radiusPixels);
+    const QRect searchRect(viewPos.x() - radius,
+                           viewPos.y() - radius,
+                           radius * 2 + 1,
+                           radius * 2 + 1);
+    const QList<QGraphicsItem *> nearbyItems = items(searchRect);
+    if (nearbyItems.isEmpty()) {
+        return nullptr;
+    }
+
+    const QPointF modelPoint = sceneToModelPoint(mapToScene(viewPos));
+    QGraphicsItem *bestItem = nullptr;
+    double bestDistance = std::numeric_limits<double>::max();
+    QList<int> seenEntityIndexes;
+
+    for (QGraphicsItem *item : nearbyItems) {
+        if (!item->data(EntityIndexRole).isValid() || item->data(HandleTypeRole).isValid()) {
+            continue;
+        }
+
+        const int entityIndex = item->data(EntityIndexRole).toInt();
+        if (seenEntityIndexes.contains(entityIndex)
+            || entityIndex < 0
+            || entityIndex >= m_document.entities.size()) {
+            continue;
+        }
+        seenEntityIndexes.append(entityIndex);
+
+        const double distance = distanceToEntity(m_document.entities.at(entityIndex), modelPoint);
+        if (distance < bestDistance) {
+            bestDistance = distance;
+            bestItem = item;
+        }
+    }
+
+    return bestItem;
 }
 
 void DxfViewWidget::clearHandles()
@@ -916,15 +1123,24 @@ void DxfViewWidget::clearBreakPreview()
     }
 }
 
-void DxfViewWidget::clearBladeLineGuide()
+void DxfViewWidget::clearPendingTrimPreview()
 {
-    for (QGraphicsItem *item : std::as_const(m_bladeLineGuideItems)) {
+    if (m_pendingTrimPreviewItem != nullptr) {
+        m_scene->removeItem(m_pendingTrimPreviewItem);
+        delete m_pendingTrimPreviewItem;
+        m_pendingTrimPreviewItem = nullptr;
+    }
+}
+
+void DxfViewWidget::clearRuleProfileGuide()
+{
+    for (QGraphicsItem *item : std::as_const(m_ruleProfileGuideItems)) {
         if (item != nullptr) {
             m_scene->removeItem(item);
             delete item;
         }
     }
-    m_bladeLineGuideItems.clear();
+    m_ruleProfileGuideItems.clear();
 }
 
 void DxfViewWidget::clearPortItems()
@@ -938,7 +1154,7 @@ void DxfViewWidget::clearPortItems()
     m_portItems.clear();
 }
 
-void DxfViewWidget::renderBladeLineGuide()
+void DxfViewWidget::renderRuleProfileGuide()
 {
     if (m_scene == nullptr) {
         return;
@@ -946,9 +1162,9 @@ void DxfViewWidget::renderBladeLineGuide()
 
     const qreal scale = std::clamp(m_viewColors.flagScale, 0.5, 3.0);
 
-    if (m_showBladeLineGuideArrow) {
-        const QPointF sceneStart = modelToScenePoint(m_bladeLineGuideStartPoint);
-        const QPointF sceneNext = modelToScenePoint(m_bladeLineGuideNextPoint);
+    if (m_showRuleProfileGuideArrow) {
+        const QPointF sceneStart = modelToScenePoint(m_ruleProfileGuideStartPoint);
+        const QPointF sceneNext = modelToScenePoint(m_ruleProfileGuideNextPoint);
         const QLineF directionLine(sceneStart, sceneNext);
         if (directionLine.length() > 0.001) {
             const QPointF tangent = directionLine.p2() - directionLine.p1();
@@ -969,13 +1185,13 @@ void DxfViewWidget::renderBladeLineGuide()
             mastItem->setPos(sceneStart);
             mastItem->setFlag(QGraphicsItem::ItemIgnoresTransformations, true);
             mastItem->setZValue(13.0);
-            m_bladeLineGuideItems.append(mastItem);
+            m_ruleProfileGuideItems.append(mastItem);
 
             QPolygonF startFlag;
             const QPointF mastTip = normalUnit * mastLength;
-            startFlag << mastTip
-                      << mastTip + tangentUnit * flagLength + normalUnit * flagHalfHeight
-                      << mastTip + tangentUnit * flagLength - normalUnit * flagHalfHeight;
+            startFlag << mastTip + tangentUnit * flagLength
+                      << mastTip + normalUnit * flagHalfHeight
+                      << mastTip - normalUnit * flagHalfHeight;
             auto *startFlagItem = m_scene->addPolygon(startFlag,
                                                       QPen(m_viewColors.startFlagColor, 1.2),
                                                       m_viewColors.fillFlags
@@ -984,7 +1200,7 @@ void DxfViewWidget::renderBladeLineGuide()
             startFlagItem->setPos(sceneStart);
             startFlagItem->setFlag(QGraphicsItem::ItemIgnoresTransformations, true);
             startFlagItem->setZValue(13.0);
-            m_bladeLineGuideItems.append(startFlagItem);
+            m_ruleProfileGuideItems.append(startFlagItem);
 
             auto *startMarker = m_scene->addEllipse(-markerRadius,
                                                     -markerRadius,
@@ -995,13 +1211,13 @@ void DxfViewWidget::renderBladeLineGuide()
             startMarker->setPos(sceneStart);
             startMarker->setFlag(QGraphicsItem::ItemIgnoresTransformations, true);
             startMarker->setZValue(13.0);
-            m_bladeLineGuideItems.append(startMarker);
+            m_ruleProfileGuideItems.append(startMarker);
         }
     }
 
-    if (m_showBladeLineOpenPoint) {
-        const QPointF sceneOpen = modelToScenePoint(m_bladeLineOpenPoint);
-        const QPointF scenePrev = modelToScenePoint(m_bladeLineGuideNextPoint);
+    if (m_showRuleProfileOpenPoint) {
+        const QPointF sceneOpen = modelToScenePoint(m_ruleProfileOpenPoint);
+        const QPointF scenePrev = modelToScenePoint(m_ruleProfileGuideNextPoint);
         const QPointF tangent = sceneOpen - scenePrev;
         const qreal tangentLength = std::hypot(tangent.x(), tangent.y());
         const QPointF tangentUnit = tangentLength > 0.0
@@ -1020,7 +1236,7 @@ void DxfViewWidget::renderBladeLineGuide()
         mastItem->setPos(sceneOpen);
         mastItem->setFlag(QGraphicsItem::ItemIgnoresTransformations, true);
         mastItem->setZValue(13.0);
-        m_bladeLineGuideItems.append(mastItem);
+        m_ruleProfileGuideItems.append(mastItem);
 
         QPolygonF endFlag;
         const QPointF mastTip = normalUnit * mastLength;
@@ -1035,7 +1251,7 @@ void DxfViewWidget::renderBladeLineGuide()
         endFlagItem->setPos(sceneOpen);
         endFlagItem->setFlag(QGraphicsItem::ItemIgnoresTransformations, true);
         endFlagItem->setZValue(13.0);
-        m_bladeLineGuideItems.append(endFlagItem);
+        m_ruleProfileGuideItems.append(endFlagItem);
 
         auto *openMarker = m_scene->addEllipse(-markerRadius,
                                                -markerRadius,
@@ -1046,7 +1262,7 @@ void DxfViewWidget::renderBladeLineGuide()
         openMarker->setPos(sceneOpen);
         openMarker->setFlag(QGraphicsItem::ItemIgnoresTransformations, true);
         openMarker->setZValue(13.0);
-        m_bladeLineGuideItems.append(openMarker);
+        m_ruleProfileGuideItems.append(openMarker);
     }
 }
 
@@ -1058,10 +1274,31 @@ void DxfViewWidget::renderDetectedPorts()
 
     for (int portIndex = 0; portIndex < m_detectedPorts.size(); ++portIndex) {
         const DetectedPort &port = m_detectedPorts.at(portIndex);
+        bool portVisible = true;
+        for (int entityIndex : port.relatedEntityIndexes) {
+            if (entityIndex >= 0 && entityIndex < m_document.entities.size()) {
+                const DxfEntity &relatedEntity = m_document.entities.at(entityIndex);
+                if (!isLayerVisible(m_document, relatedEntity.layerName)) {
+                    portVisible = false;
+                    break;
+                }
+            }
+        }
+        if (!portVisible) {
+            continue;
+        }
+
+        const bool isTreeSelected = m_treeSelectionPortIndexes.contains(portIndex);
         const bool isHighlighted = m_highlightedPortIndexes.contains(portIndex);
-        QPen pen(m_viewColors.portColor,
-                 isHighlighted ? 3.6 : 2.2,
-                 isHighlighted ? Qt::SolidLine : Qt::DashLine);
+        const bool isHovered = m_hoveredPortIndexes.contains(portIndex);
+        const QColor penColor = isTreeSelected
+                                    ? (m_treeSelectionEntityIndexes.isEmpty()
+                                           ? m_viewColors.selectedEntityColor
+                                           : m_viewColors.segmentSelectionColor)
+                                    : m_viewColors.portColor;
+        QPen pen(penColor,
+                 isTreeSelected ? 5.2 : isHovered ? 4.6 : isHighlighted ? 3.6 : 2.2,
+                 (isTreeSelected || isHovered || isHighlighted) ? Qt::SolidLine : Qt::DashLine);
         pen.setCosmetic(true);
         QGraphicsItem *item = nullptr;
         if (port.type == DetectedPortType::Line) {
@@ -1088,13 +1325,33 @@ void DxfViewWidget::renderDetectedPorts()
     }
 }
 
-QPointF DxfViewWidget::closestPointOnLineEntity(int entityIndex, const QPointF &scenePos) const
+QPointF DxfViewWidget::closestPointOnBreakEntity(int entityIndex, const QPointF &scenePos) const
 {
     if (entityIndex < 0 || entityIndex >= m_document.entities.size()) {
         return scenePos;
     }
 
     const DxfEntity &entity = m_document.entities.at(entityIndex);
+    if (entity.type == DxfEntityType::Arc) {
+        const QPointF radial = scenePos - entity.center;
+        const double radialLength = std::hypot(radial.x(), radial.y());
+        if (qFuzzyIsNull(radialLength) || qFuzzyIsNull(entity.radius)) {
+            return arcPointAtAngle(entity.center, entity.radius, entity.startAngleDeg);
+        }
+
+        double angleDeg = qRadiansToDegrees(std::atan2(radial.y(), radial.x()));
+        angleDeg = normalizeAngle360(angleDeg);
+        if (!angleWithinArcSweep(angleDeg, entity.startAngleDeg, entity.endAngleDeg)) {
+            const QPointF startPoint = arcPointAtAngle(entity.center, entity.radius, entity.startAngleDeg);
+            const QPointF endPoint = arcPointAtAngle(entity.center, entity.radius, entity.endAngleDeg);
+            return QLineF(scenePos, startPoint).length() <= QLineF(scenePos, endPoint).length()
+                       ? startPoint
+                       : endPoint;
+        }
+
+        return arcPointAtAngle(entity.center, entity.radius, angleDeg);
+    }
+
     if (entity.type != DxfEntityType::Line || entity.points.size() != 2) {
         return scenePos;
     }

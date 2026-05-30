@@ -14,8 +14,8 @@ public:
     int projectVersion = 1;
     QString projectFilePath;
     QString dxfFilePath;
-    QList<QStringList> bladeLines;
-    int activeBladeLineIndex = 0;
+    QList<QStringList> ruleProfiles;
+    int activeRuleProfileIndex = 0;
     QStringList layerAssignments;
     QStringList features;
     QStringList modifiers;
