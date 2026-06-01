@@ -9,6 +9,7 @@
 #include <QAction>
 #include <QComboBox>
 #include <QDoubleSpinBox>
+#include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFont>
@@ -112,6 +113,60 @@ void sortArcBendTable(QList<ArcBendTableRow> *rows)
     });
 }
 
+double bendArcSegmentLengthMm(double radiusMm)
+{
+    const double absoluteRadius = qAbs(radiusMm);
+    if (absoluteRadius <= 5.0) {
+        return 0.5;
+    }
+    if (absoluteRadius <= 10.0) {
+        return 0.7;
+    }
+    if (absoluteRadius <= 20.0) {
+        return 1.0;
+    }
+    return 1.5;
+}
+
+int bendArcSegmentCount(double radiusMm, double totalAngleDeg, double segmentLengthMm)
+{
+    if (segmentLengthMm <= 0.0 || totalAngleDeg <= 0.0 || radiusMm <= 0.0) {
+        return 1;
+    }
+
+    const double arcLengthMm = radiusMm * qDegreesToRadians(totalAngleDeg);
+    return qMax(1, qRound(arcLengthMm / segmentLengthMm));
+}
+
+int bendArcValue(double radiusMm, double totalAngleDeg, double segmentLengthMm)
+{
+    const int segments = bendArcSegmentCount(radiusMm, totalAngleDeg, segmentLengthMm);
+    return qRound((totalAngleDeg / static_cast<double>(segments)) * 100.0);
+}
+
+double bendArcDegreesFor90(double segments)
+{
+    if (segments <= 0.0) {
+        return 0.0;
+    }
+
+    return 90.0 / segments;
+}
+
+ArcBendTableRow defaultArcBendRow(double radiusMm)
+{
+    ArcBendTableRow row;
+    row.radiusMm = radiusMm;
+    const double segmentLengthMm = bendArcSegmentLengthMm(radiusMm);
+    row.segmentLengthMm = segmentLengthMm;
+    row.segments = bendArcSegmentCount(radiusMm, 90.0, segmentLengthMm);
+    row.right90 = bendArcValue(radiusMm, 90.0, segmentLengthMm);
+    row.right45 = bendArcValue(radiusMm, 45.0, segmentLengthMm);
+    row.left90 = bendArcValue(radiusMm, 90.0, segmentLengthMm);
+    row.left45 = bendArcValue(radiusMm, 45.0, segmentLengthMm);
+    return row;
+}
+
 QString settingsFilePath()
 {
     return QCoreApplication::applicationDirPath() + QStringLiteral("/settings.json");
@@ -119,7 +174,39 @@ QString settingsFilePath()
 
 QString bendParametersFilePath()
 {
-    return QCoreApplication::applicationDirPath() + QStringLiteral("/bendparameters.json");
+    return QCoreApplication::applicationDirPath() + QStringLiteral("/bend_default.json");
+}
+
+QString sanitizeBendParametersFileBase(const QString &name)
+{
+    QString sanitized;
+    sanitized.reserve(name.size());
+    bool previousUnderscore = false;
+
+    for (const QChar ch : name.trimmed()) {
+        if (ch.isLetterOrNumber()) {
+            sanitized.append(ch.toLower());
+            previousUnderscore = false;
+            continue;
+        }
+
+        if (ch == QChar('-') || ch == QChar('_') || ch.isSpace()) {
+            if (!previousUnderscore && !sanitized.isEmpty()) {
+                sanitized.append(QChar('_'));
+                previousUnderscore = true;
+            }
+        }
+    }
+
+    while (sanitized.endsWith(QChar('_'))) {
+        sanitized.chop(1);
+    }
+
+    if (sanitized.isEmpty()) {
+        sanitized = QStringLiteral("default");
+    }
+
+    return QStringLiteral("bend_%1.json").arg(sanitized);
 }
 
 QString treeItemKey(const QTreeWidgetItem *item)
@@ -1912,6 +1999,7 @@ MainWindow::MainWindow(QWidget *parent)
     populateToolTable();
     populateBendTables();
     updateBendParametersStatusUi();
+    refreshBendParametersFileList();
     populateLayerTree();
     populateEntityProperties();
     updateProjectSummary();
@@ -2102,12 +2190,22 @@ void MainWindow::setupWindow()
             this, &MainWindow::addAngleBendRow);
     connect(ui->addArcBendRowButton, &QPushButton::clicked,
             this, &MainWindow::addArcBendRow);
+    connect(ui->newBendParametersButton, &QPushButton::clicked,
+            this, &MainWindow::createNewBendParametersSet);
     connect(ui->openBendParametersButton, &QPushButton::clicked,
             this, &MainWindow::openBendParametersFile);
+    connect(ui->loadBendParametersButton, &QPushButton::clicked,
+            this, &MainWindow::loadSelectedBendParametersFile);
     connect(ui->saveBendParametersButton, &QPushButton::clicked,
             this, &MainWindow::saveBendParametersFile);
     connect(ui->saveBendParametersAsButton, &QPushButton::clicked,
             this, &MainWindow::saveBendParametersFileAs);
+    connect(ui->bendParametersNameEdit, &QLineEdit::editingFinished,
+            this, &MainWindow::handleBendParametersNameEditingFinished);
+    connect(ui->bendParametersDescriptionEdit, &QLineEdit::editingFinished,
+            this, &MainWindow::handleBendParametersDescriptionEditingFinished);
+    connect(ui->bendParametersNotesEdit, &QPlainTextEdit::textChanged,
+            this, &MainWindow::handleBendParametersNotesChanged);
     connect(ui->selectedEntityColorButton, &QPushButton::clicked, this, [this] {
         chooseColor(ui->selectedEntityColorButton, &m_appSettings.selectedEntityColor,
                     QStringLiteral("Choose Entity Selection Color"), QStringLiteral("Entity"));
@@ -3546,14 +3644,14 @@ void MainWindow::handleArcBendTableCellChanged(int row, int column)
     ArcBendTableRow &tableRow = m_appSettings.arcBendTable[row];
     bool ok = false;
 
-    if (column == 1) {
-        const int hits = item->text().toInt(&ok);
-        if (!ok || hits <= 0) {
+    if (column == 2) {
+        const int segments = item->text().toInt(&ok);
+        if (!ok || segments <= 0) {
             populateBendTables();
-            statusBar()->showMessage(QStringLiteral("Invalid hits value"), 3000);
+            statusBar()->showMessage(QStringLiteral("Invalid segments value"), 3000);
             return;
         }
-        tableRow.hits = hits;
+        tableRow.segments = segments;
     } else {
         const double value = item->text().toDouble(&ok);
         if (!ok) {
@@ -3567,25 +3665,35 @@ void MainWindow::handleArcBendTableCellChanged(int row, int column)
             tableRow.radiusMm = value;
             sortArcBendTable(&m_appSettings.arcBendTable);
             break;
-        case 2:
-            tableRow.right90 = value;
+        case 1:
+            if (value <= 0.0) {
+                populateBendTables();
+                statusBar()->showMessage(QStringLiteral("Segment length must be greater than zero"), 3000);
+                return;
+            }
+            tableRow.segmentLengthMm = value;
             break;
         case 3:
-            tableRow.right45 = value;
-            break;
+            return;
         case 4:
-            tableRow.left90 = value;
+            tableRow.right90 = qRound(value);
             break;
         case 5:
-            tableRow.left45 = value;
+            tableRow.right45 = qRound(value);
             break;
         case 6:
-            tableRow.startCorrection = value;
+            tableRow.left90 = qRound(value);
             break;
         case 7:
-            tableRow.endCorrection = value;
+            tableRow.left45 = qRound(value);
             break;
         case 8:
+            tableRow.startCorrection = value;
+            break;
+        case 9:
+            tableRow.endCorrection = value;
+            break;
+        case 10:
             tableRow.bridgeReduction = value;
             break;
         default:
@@ -3596,6 +3704,63 @@ void MainWindow::handleArcBendTableCellChanged(int row, int column)
     saveAppSettings();
     populateBendTables();
     statusBar()->showMessage(QStringLiteral("Arc bend table saved"), 2000);
+}
+
+QString MainWindow::defaultBendParametersFilePath() const
+{
+    return bendParametersFilePath();
+}
+
+QString MainWindow::bendParametersDirectoryPath() const
+{
+    const QString currentPath = m_currentBendParametersFilePath.trimmed();
+    if (!currentPath.isEmpty()) {
+        const QFileInfo currentInfo(currentPath);
+        return currentInfo.absolutePath();
+    }
+
+    return QFileInfo(defaultBendParametersFilePath()).absolutePath();
+}
+
+QString MainWindow::sanitizeBendParametersName(const QString &name) const
+{
+    const QString trimmed = name.trimmed();
+    return trimmed.isEmpty() ? QStringLiteral("Default") : trimmed;
+}
+
+QString MainWindow::bendParametersFilePathForName(const QString &name) const
+{
+    const QString directoryPath = bendParametersDirectoryPath();
+    const QString fileName = sanitizeBendParametersFileBase(name);
+    return QDir(directoryPath).filePath(fileName);
+}
+
+bool MainWindow::saveCurrentBendParametersWithNamePrompt()
+{
+    m_appSettings.bendParametersName = sanitizeBendParametersName(m_appSettings.bendParametersName);
+
+    const QString currentPath = m_currentBendParametersFilePath.trimmed().isEmpty()
+                                    ? defaultBendParametersFilePath()
+                                    : m_currentBendParametersFilePath;
+    const QString targetPath = bendParametersFilePathForName(m_appSettings.bendParametersName);
+
+    if (QFileInfo(currentPath).fileName() == QFileInfo(targetPath).fileName()) {
+        return saveBendParametersFilePath(currentPath, true);
+    }
+
+    const QMessageBox::StandardButton answer =
+        QMessageBox::question(this,
+                              QStringLiteral("Save Bend Parameters As New"),
+                              QStringLiteral("Name changed to \"%1\".\nSave bend parameters as a new file?\n\n%2")
+                                  .arg(m_appSettings.bendParametersName, QFileInfo(targetPath).fileName()),
+                              QMessageBox::Yes | QMessageBox::No,
+                              QMessageBox::Yes);
+
+    if (answer == QMessageBox::Yes) {
+        return saveBendParametersFilePath(targetPath, true);
+    }
+
+    return saveBendParametersFilePath(currentPath, true);
 }
 
 void MainWindow::loadAppSettings()
@@ -3612,17 +3777,34 @@ void MainWindow::loadAppSettings()
 
     m_currentBendParametersFilePath =
         m_appSettings.lastBendParametersFilePath.trimmed().isEmpty()
-            ? bendParametersFilePath()
+            ? defaultBendParametersFilePath()
             : m_appSettings.lastBendParametersFilePath.trimmed();
 
     AppSettings bendSettings = m_appSettings;
     QString bendErrorMessage;
     if (!JsonBendParametersStore::load(m_currentBendParametersFilePath, &bendSettings, &bendErrorMessage)) {
-        JsonBendParametersStore::save(m_currentBendParametersFilePath, m_appSettings, nullptr);
+        const QString legacyPath = QCoreApplication::applicationDirPath() + QStringLiteral("/bendparameters.json");
+        if (m_currentBendParametersFilePath != legacyPath
+            && JsonBendParametersStore::load(legacyPath, &bendSettings, nullptr)) {
+            m_currentBendParametersFilePath = legacyPath;
+            m_appSettings.lastBendParametersFilePath = legacyPath;
+            m_appSettings.angleBendTable = bendSettings.angleBendTable;
+            m_appSettings.arcBendTable = bendSettings.arcBendTable;
+            m_appSettings.bendParametersName = bendSettings.bendParametersName;
+            m_appSettings.bendParametersDescription = bendSettings.bendParametersDescription;
+            m_appSettings.bendParametersNotes = bendSettings.bendParametersNotes;
+        } else {
+            JsonBendParametersStore::save(m_currentBendParametersFilePath, m_appSettings, nullptr);
+        }
     } else {
         m_appSettings.angleBendTable = bendSettings.angleBendTable;
         m_appSettings.arcBendTable = bendSettings.arcBendTable;
+        m_appSettings.bendParametersName = bendSettings.bendParametersName;
+        m_appSettings.bendParametersDescription = bendSettings.bendParametersDescription;
+        m_appSettings.bendParametersNotes = bendSettings.bendParametersNotes;
     }
+
+    m_appSettings.bendParametersName = sanitizeBendParametersName(m_appSettings.bendParametersName);
 }
 
 bool MainWindow::saveAppSettings(bool logSuccess)
@@ -3659,6 +3841,7 @@ bool MainWindow::saveAppSettings(bool logSuccess)
         }
     }
     updateBendParametersStatusUi();
+    refreshBendParametersFileList();
     return true;
 }
 
@@ -3679,6 +3862,9 @@ bool MainWindow::loadBendParametersFilePath(const QString &filePath)
 
     m_appSettings.angleBendTable = bendSettings.angleBendTable;
     m_appSettings.arcBendTable = bendSettings.arcBendTable;
+    m_appSettings.bendParametersName = sanitizeBendParametersName(bendSettings.bendParametersName);
+    m_appSettings.bendParametersDescription = bendSettings.bendParametersDescription;
+    m_appSettings.bendParametersNotes = bendSettings.bendParametersNotes;
     m_currentBendParametersFilePath = filePath;
     updateBendParametersStatusUi();
     populateBendTables();
@@ -3693,6 +3879,8 @@ bool MainWindow::saveBendParametersFilePath(const QString &filePath, bool update
     if (filePath.trimmed().isEmpty()) {
         return false;
     }
+
+    m_appSettings.bendParametersName = sanitizeBendParametersName(m_appSettings.bendParametersName);
 
     QString errorMessage;
     if (!JsonBendParametersStore::save(filePath, m_appSettings, &errorMessage)) {
@@ -3722,21 +3910,65 @@ void MainWindow::updateBendParametersStatusUi()
     }
 
     const QString filePath = m_currentBendParametersFilePath.trimmed().isEmpty()
-                                 ? bendParametersFilePath()
+                                 ? defaultBendParametersFilePath()
                                  : m_currentBendParametersFilePath;
     const QFileInfo fileInfo(filePath);
-    ui->bendParametersNameValue->setText(fileInfo.fileName().isEmpty()
+    m_isUpdatingBendParametersUi = true;
+    ui->bendParametersNameEdit->setText(sanitizeBendParametersName(m_appSettings.bendParametersName));
+    ui->bendParametersDescriptionEdit->setText(m_appSettings.bendParametersDescription);
+    ui->bendParametersNotesEdit->setPlainText(m_appSettings.bendParametersNotes);
+    ui->bendParametersFileValue->setText(fileInfo.fileName().isEmpty()
                                              ? QStringLiteral("(unnamed)")
                                              : fileInfo.fileName());
     ui->bendParametersModifiedValue->setText(fileInfo.exists()
                                                  ? fileInfo.lastModified().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"))
                                                  : QStringLiteral("-"));
+    m_isUpdatingBendParametersUi = false;
+}
+
+void MainWindow::refreshBendParametersFileList()
+{
+    if (ui == nullptr) {
+        return;
+    }
+
+    const QSignalBlocker blocker(ui->bendParametersFileComboBox);
+    ui->bendParametersFileComboBox->clear();
+
+    const QDir directory(bendParametersDirectoryPath());
+    const QFileInfoList entries =
+        directory.entryInfoList({QStringLiteral("bend_*.json")}, QDir::Files, QDir::Name);
+
+    int currentIndex = -1;
+    for (const QFileInfo &entry : entries) {
+        AppSettings metadata;
+        QString displayName = entry.completeBaseName();
+        if (JsonBendParametersStore::load(entry.absoluteFilePath(), &metadata, nullptr)) {
+            displayName = sanitizeBendParametersName(metadata.bendParametersName);
+        }
+
+        ui->bendParametersFileComboBox->addItem(displayName, entry.absoluteFilePath());
+        if (QFileInfo(m_currentBendParametersFilePath).absoluteFilePath() == entry.absoluteFilePath()) {
+            currentIndex = ui->bendParametersFileComboBox->count() - 1;
+        }
+    }
+
+    if (currentIndex < 0 && !m_currentBendParametersFilePath.trimmed().isEmpty()) {
+        const QFileInfo currentInfo(m_currentBendParametersFilePath);
+        ui->bendParametersFileComboBox->addItem(sanitizeBendParametersName(m_appSettings.bendParametersName),
+                                                currentInfo.absoluteFilePath());
+        currentIndex = ui->bendParametersFileComboBox->count() - 1;
+    }
+
+    if (currentIndex >= 0) {
+        ui->bendParametersFileComboBox->setCurrentIndex(currentIndex);
+    }
 }
 
 void MainWindow::openBendParametersFile()
 {
     const QString initialPath = m_currentBendParametersFilePath.isEmpty()
-                                    ? bendParametersFilePath()
+                                    ? defaultBendParametersFilePath()
                                     : m_currentBendParametersFilePath;
     const QString filePath = QFileDialog::getOpenFileName(this,
                                                           QStringLiteral("Open Bend Parameters"),
@@ -3749,19 +3981,25 @@ void MainWindow::openBendParametersFile()
     loadBendParametersFilePath(filePath);
 }
 
+void MainWindow::loadSelectedBendParametersFile()
+{
+    const QString filePath = ui->bendParametersFileComboBox->currentData().toString();
+    if (filePath.isEmpty()) {
+        statusBar()->showMessage(QStringLiteral("No bend parameters file selected"), 3000);
+        return;
+    }
+
+    loadBendParametersFilePath(filePath);
+}
+
 void MainWindow::saveBendParametersFile()
 {
-    const QString filePath = m_currentBendParametersFilePath.isEmpty()
-                                 ? bendParametersFilePath()
-                                 : m_currentBendParametersFilePath;
-    saveBendParametersFilePath(filePath, true);
+    saveCurrentBendParametersWithNamePrompt();
 }
 
 void MainWindow::saveBendParametersFileAs()
 {
-    const QString initialPath = m_currentBendParametersFilePath.isEmpty()
-                                    ? bendParametersFilePath()
-                                    : m_currentBendParametersFilePath;
+    const QString initialPath = bendParametersFilePathForName(m_appSettings.bendParametersName);
     const QString filePath = QFileDialog::getSaveFileName(this,
                                                           QStringLiteral("Save Bend Parameters As"),
                                                           initialPath,
@@ -3771,6 +4009,42 @@ void MainWindow::saveBendParametersFileAs()
     }
 
     saveBendParametersFilePath(filePath, true);
+}
+
+void MainWindow::handleBendParametersNameEditingFinished()
+{
+    if (m_isUpdatingBendParametersUi) {
+        return;
+    }
+
+    const QString newName = sanitizeBendParametersName(ui->bendParametersNameEdit->text());
+    if (newName == m_appSettings.bendParametersName) {
+        updateBendParametersStatusUi();
+        return;
+    }
+
+    m_appSettings.bendParametersName = newName;
+    saveCurrentBendParametersWithNamePrompt();
+}
+
+void MainWindow::handleBendParametersDescriptionEditingFinished()
+{
+    if (m_isUpdatingBendParametersUi) {
+        return;
+    }
+
+    m_appSettings.bendParametersDescription = ui->bendParametersDescriptionEdit->text();
+    saveAppSettings();
+}
+
+void MainWindow::handleBendParametersNotesChanged()
+{
+    if (m_isUpdatingBendParametersUi) {
+        return;
+    }
+
+    m_appSettings.bendParametersNotes = ui->bendParametersNotesEdit->toPlainText();
+    saveAppSettings();
 }
 
 void MainWindow::addAngleBendRow()
@@ -3867,6 +4141,7 @@ void MainWindow::addArcBendRow()
 
     ArcBendTableRow newRow;
     newRow.radiusMm = radiusMm;
+    newRow.segmentLengthMm = bendArcSegmentLengthMm(radiusMm);
     sortArcBendTable(&m_appSettings.arcBendTable);
     int insertIndex = 0;
     while (insertIndex < m_appSettings.arcBendTable.size()
@@ -3875,25 +4150,28 @@ void MainWindow::addArcBendRow()
     }
 
     if (m_appSettings.arcBendTable.isEmpty()) {
-        newRow.hits = qRound(90.0 / AppSettings::DefaultArcHitAngleDeg);
-        newRow.right90 = AppSettings::DefaultArcHitAngleDeg * 100.0;
-        newRow.right45 = AppSettings::DefaultArcHitAngleDeg * 100.0;
-        newRow.left90 = AppSettings::DefaultArcHitAngleDeg * 100.0;
-        newRow.left45 = AppSettings::DefaultArcHitAngleDeg * 100.0;
+        newRow = defaultArcBendRow(radiusMm);
     } else if (insertIndex <= 0) {
         newRow = m_appSettings.arcBendTable.first();
         newRow.radiusMm = radiusMm;
+        newRow.segmentLengthMm = bendArcSegmentLengthMm(radiusMm);
     } else if (insertIndex >= m_appSettings.arcBendTable.size()) {
         newRow = m_appSettings.arcBendTable.last();
         newRow.radiusMm = radiusMm;
+        newRow.segmentLengthMm = bendArcSegmentLengthMm(radiusMm);
     } else {
         const ArcBendTableRow &leftRow = m_appSettings.arcBendTable.at(insertIndex - 1);
         const ArcBendTableRow &rightRow = m_appSettings.arcBendTable.at(insertIndex);
-        newRow.hits = qRound(interpolateLinear(radiusMm,
-                                               leftRow.radiusMm,
-                                               leftRow.hits,
-                                               rightRow.radiusMm,
-                                               rightRow.hits));
+        newRow.segmentLengthMm = interpolateLinear(radiusMm,
+                                                   leftRow.radiusMm,
+                                                   leftRow.segmentLengthMm,
+                                                   rightRow.radiusMm,
+                                                   rightRow.segmentLengthMm);
+        newRow.segments = qRound(interpolateLinear(radiusMm,
+                                                   leftRow.radiusMm,
+                                                   leftRow.segments,
+                                                   rightRow.radiusMm,
+                                                   rightRow.segments));
         newRow.right90 = interpolateLinear(radiusMm, leftRow.radiusMm, leftRow.right90, rightRow.radiusMm, rightRow.right90);
         newRow.right45 = interpolateLinear(radiusMm, leftRow.radiusMm, leftRow.right45, rightRow.radiusMm, rightRow.right45);
         newRow.left90 = interpolateLinear(radiusMm, leftRow.radiusMm, leftRow.left90, rightRow.radiusMm, rightRow.left90);
@@ -3920,6 +4198,35 @@ void MainWindow::addArcBendRow()
     saveAppSettings();
     populateBendTables();
     statusBar()->showMessage(QStringLiteral("Arc bend row added"), 2000);
+}
+
+void MainWindow::createNewBendParametersSet()
+{
+    bool ok = false;
+    const QString suggestedName =
+        sanitizeBendParametersName(ui->bendParametersNameEdit->text().trimmed().isEmpty()
+                                       ? m_appSettings.bendParametersName
+                                       : ui->bendParametersNameEdit->text());
+    const QString name = QInputDialog::getText(this,
+                                               QStringLiteral("New Bend Parameters"),
+                                               QStringLiteral("Name"),
+                                               QLineEdit::Normal,
+                                               suggestedName,
+                                               &ok).trimmed();
+    if (!ok) {
+        return;
+    }
+
+    const QString sanitizedName = sanitizeBendParametersName(name);
+    m_appSettings.bendParametersName = sanitizedName;
+    m_appSettings.bendParametersDescription.clear();
+    m_appSettings.bendParametersNotes.clear();
+    m_appSettings.angleBendTable = AppSettings::createDefaultAngleBendTable();
+    m_appSettings.arcBendTable = AppSettings::createDefaultArcBendTable();
+    const QString filePath = bendParametersFilePathForName(sanitizedName);
+    saveBendParametersFilePath(filePath, true);
+    populateBendTables();
+    statusBar()->showMessage(QStringLiteral("New bend parameter set created"), 3000);
 }
 
 void MainWindow::handleFlagScaleChanged(int value)
@@ -4458,14 +4765,18 @@ void MainWindow::populateBendTables()
         for (int row = 0; row < m_appSettings.arcBendTable.size(); ++row) {
             const ArcBendTableRow &tableRow = m_appSettings.arcBendTable.at(row);
             ui->arcBendTableWidget->setItem(row, 0, new QTableWidgetItem(QString::number(tableRow.radiusMm, 'f', 2)));
-            ui->arcBendTableWidget->setItem(row, 1, new QTableWidgetItem(QString::number(tableRow.hits)));
-            ui->arcBendTableWidget->setItem(row, 2, new QTableWidgetItem(QString::number(tableRow.right90, 'f', 2)));
-            ui->arcBendTableWidget->setItem(row, 3, new QTableWidgetItem(QString::number(tableRow.right45, 'f', 2)));
-            ui->arcBendTableWidget->setItem(row, 4, new QTableWidgetItem(QString::number(tableRow.left90, 'f', 2)));
-            ui->arcBendTableWidget->setItem(row, 5, new QTableWidgetItem(QString::number(tableRow.left45, 'f', 2)));
-            ui->arcBendTableWidget->setItem(row, 6, new QTableWidgetItem(QString::number(tableRow.startCorrection, 'f', 2)));
-            ui->arcBendTableWidget->setItem(row, 7, new QTableWidgetItem(QString::number(tableRow.endCorrection, 'f', 2)));
-            ui->arcBendTableWidget->setItem(row, 8, new QTableWidgetItem(QString::number(tableRow.bridgeReduction, 'f', 2)));
+            ui->arcBendTableWidget->setItem(row, 1, new QTableWidgetItem(QString::number(tableRow.segmentLengthMm, 'f', 2)));
+            ui->arcBendTableWidget->setItem(row, 2, new QTableWidgetItem(QString::number(tableRow.segments)));
+            auto *degreesItem = new QTableWidgetItem(QString::number(bendArcDegreesFor90(tableRow.segments), 'f', 2));
+            degreesItem->setFlags(degreesItem->flags() & ~Qt::ItemIsEditable);
+            ui->arcBendTableWidget->setItem(row, 3, degreesItem);
+            ui->arcBendTableWidget->setItem(row, 4, new QTableWidgetItem(QString::number(tableRow.right90)));
+            ui->arcBendTableWidget->setItem(row, 5, new QTableWidgetItem(QString::number(tableRow.right45)));
+            ui->arcBendTableWidget->setItem(row, 6, new QTableWidgetItem(QString::number(tableRow.left90)));
+            ui->arcBendTableWidget->setItem(row, 7, new QTableWidgetItem(QString::number(tableRow.left45)));
+            ui->arcBendTableWidget->setItem(row, 8, new QTableWidgetItem(QString::number(tableRow.startCorrection, 'f', 2)));
+            ui->arcBendTableWidget->setItem(row, 9, new QTableWidgetItem(QString::number(tableRow.endCorrection, 'f', 2)));
+            ui->arcBendTableWidget->setItem(row, 10, new QTableWidgetItem(QString::number(tableRow.bridgeReduction, 'f', 2)));
 
             auto *button = new QPushButton(QStringLiteral("Recalculate"), ui->arcBendTableWidget);
             connect(button, &QPushButton::clicked, this, [this, row] {
@@ -4473,21 +4784,22 @@ void MainWindow::populateBendTables()
                     return;
                 }
                 ArcBendTableRow &tableRow = m_appSettings.arcBendTable[row];
-                if (tableRow.hits <= 0) {
-                    statusBar()->showMessage(QStringLiteral("Hits must be greater than zero"), 3000);
+                if (tableRow.segmentLengthMm <= 0.0) {
+                    statusBar()->showMessage(QStringLiteral("Segment length must be greater than zero"), 3000);
                     return;
                 }
-                const double newAngle = 90.0 / static_cast<double>(tableRow.hits);
-                const double newValue = newAngle * 100.0;
-                tableRow.right90 = newValue;
-                tableRow.right45 = newValue;
-                tableRow.left90 = newValue;
-                tableRow.left45 = newValue;
+                const double radiusMm = qAbs(tableRow.radiusMm);
+                const double segmentLengthMm = tableRow.segmentLengthMm;
+                tableRow.segments = bendArcSegmentCount(radiusMm, 90.0, segmentLengthMm);
+                tableRow.right90 = bendArcValue(radiusMm, 90.0, segmentLengthMm);
+                tableRow.right45 = bendArcValue(radiusMm, 45.0, segmentLengthMm);
+                tableRow.left90 = bendArcValue(radiusMm, 90.0, segmentLengthMm);
+                tableRow.left45 = bendArcValue(radiusMm, 45.0, segmentLengthMm);
                 saveAppSettings();
                 populateBendTables();
                 statusBar()->showMessage(QStringLiteral("Arc bend row recalculated"), 2000);
             });
-            ui->arcBendTableWidget->setCellWidget(row, 9, button);
+            ui->arcBendTableWidget->setCellWidget(row, 11, button);
         }
     }
 

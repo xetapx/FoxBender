@@ -71,9 +71,14 @@ private slots:
     void handleBridgeLengthChanged();
     void addAngleBendRow();
     void addArcBendRow();
+    void createNewBendParametersSet();
     void openBendParametersFile();
+    void loadSelectedBendParametersFile();
     void saveBendParametersFile();
     void saveBendParametersFileAs();
+    void handleBendParametersNameEditingFinished();
+    void handleBendParametersDescriptionEditingFinished();
+    void handleBendParametersNotesChanged();
     void acceptHoveredCandidateChain();
     void handleLayerTreeItemChanged(QTreeWidgetItem *item, int column);
     void openRecentDxfAction();
@@ -115,12 +120,18 @@ private:
     void chooseColor(QPushButton *button, QColor *targetColor, const QString &title, const QString &buttonText);
     void updateViewColorUi();
     void updateBendParametersStatusUi();
+    void refreshBendParametersFileList();
     void updateFlagPreview();
     void updateHandlePreview();
     void recomputeDetectedBridges();
     bool acceptCandidateChainByEntityIndex(int entityIndex);
     int findEntityIndexById(const QString &entityId) const;
     void updatePendingTrimPreview();
+    QString defaultBendParametersFilePath() const;
+    QString bendParametersDirectoryPath() const;
+    QString bendParametersFilePathForName(const QString &name) const;
+    QString sanitizeBendParametersName(const QString &name) const;
+    bool saveCurrentBendParametersWithNamePrompt();
     bool loadBendParametersFilePath(const QString &filePath);
     bool saveBendParametersFilePath(const QString &filePath, bool updateCurrentPath = true);
 
@@ -140,6 +151,7 @@ private:
     int m_hoveredEntityIndex = -1;
     QPointF m_lastPointerScenePos;
     QString m_currentBendParametersFilePath;
+    bool m_isUpdatingBendParametersUi = false;
     bool m_isApplyingUndoRedo = false;
     ToolMode m_toolMode = ToolMode::None;
     int m_pendingBreakEntity = -1;

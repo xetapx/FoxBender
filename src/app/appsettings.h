@@ -25,11 +25,12 @@ class ArcBendTableRow
 {
 public:
     double radiusMm = 0.0;
-    int hits = 0;
-    double right90 = 0.0;
-    double right45 = 0.0;
-    double left90 = 0.0;
-    double left45 = 0.0;
+    double segmentLengthMm = 0.0;
+    int segments = 0;
+    int right90 = 0;
+    int right45 = 0;
+    int left90 = 0;
+    int left45 = 0;
     double startCorrection = 0.0;
     double endCorrection = 0.0;
     double bridgeReduction = 0.0;
@@ -41,8 +42,9 @@ public:
 class AppSettings
 {
 public:
-    static constexpr double DefaultArcHitAngleDeg = 1.45;
-
+    QString bendParametersName = QStringLiteral("Default");
+    QString bendParametersDescription;
+    QString bendParametersNotes;
     QList<ToolStation> toolStations = ToolStation::createDefaultStations();
     QList<AngleBendTableRow> angleBendTable = createDefaultAngleBendTable();
     QList<ArcBendTableRow> arcBendTable = createDefaultArcBendTable();

@@ -4,6 +4,51 @@
 
 namespace
 {
+double arcSegmentTargetLengthMm(double radiusMm)
+{
+    const double absoluteRadius = qAbs(radiusMm);
+    if (absoluteRadius <= 5.0) {
+        return 0.5;
+    }
+    if (absoluteRadius <= 10.0) {
+        return 0.7;
+    }
+    if (absoluteRadius <= 20.0) {
+        return 1.0;
+    }
+    return 1.5;
+}
+
+int segmentCountForArc(double radiusMm, double totalAngleDeg, double segmentLengthMm)
+{
+    if (segmentLengthMm <= 0.0 || totalAngleDeg <= 0.0 || radiusMm <= 0.0) {
+        return 1;
+    }
+
+    const double arcLengthMm = radiusMm * qDegreesToRadians(totalAngleDeg);
+    return qMax(1, qRound(arcLengthMm / segmentLengthMm));
+}
+
+int bendValueForArc(double radiusMm, double totalAngleDeg, double segmentLengthMm)
+{
+    const int segments = segmentCountForArc(radiusMm, totalAngleDeg, segmentLengthMm);
+    return qRound((totalAngleDeg / static_cast<double>(segments)) * 100.0);
+}
+
+ArcBendTableRow defaultArcBendRow(double radiusMm)
+{
+    ArcBendTableRow row;
+    row.radiusMm = radiusMm;
+    const double segmentLengthMm = arcSegmentTargetLengthMm(radiusMm);
+    row.segmentLengthMm = segmentLengthMm;
+    row.segments = segmentCountForArc(radiusMm, 90.0, segmentLengthMm);
+    row.right90 = bendValueForArc(radiusMm, 90.0, segmentLengthMm);
+    row.right45 = bendValueForArc(radiusMm, 45.0, segmentLengthMm);
+    row.left90 = bendValueForArc(radiusMm, 90.0, segmentLengthMm);
+    row.left45 = bendValueForArc(radiusMm, 45.0, segmentLengthMm);
+    return row;
+}
+
 QList<AngleBendTableRow> angleBendTableFromJsonArray(const QJsonArray &array)
 {
     QList<AngleBendTableRow> rows;
@@ -90,7 +135,8 @@ QJsonObject ArcBendTableRow::toJson() const
 {
     QJsonObject json;
     json["radiusMm"] = radiusMm;
-    json["hits"] = hits;
+    json["segmentLengthMm"] = segmentLengthMm;
+    json["segments"] = segments;
     json["right90"] = right90;
     json["right45"] = right45;
     json["left90"] = left90;
@@ -105,7 +151,11 @@ ArcBendTableRow ArcBendTableRow::fromJson(const QJsonObject &json)
 {
     ArcBendTableRow row;
     row.radiusMm = json["radiusMm"].toDouble(row.radiusMm);
-    row.hits = json["hits"].toInt(row.hits);
+    row.segmentLengthMm = json["segmentLengthMm"].toDouble(row.segmentLengthMm);
+    row.segments = json["segments"].toInt();
+    if (row.segments <= 0) {
+        row.segments = json["hits"].toInt(row.segments);
+    }
     row.right90 = json["right90"].toDouble(row.right90);
     row.right45 = json["right45"].toDouble(row.right45);
     row.left90 = json["left90"].toDouble(row.left90);
@@ -113,6 +163,9 @@ ArcBendTableRow ArcBendTableRow::fromJson(const QJsonObject &json)
     row.startCorrection = json["startCorrection"].toDouble(row.startCorrection);
     row.endCorrection = json["endCorrection"].toDouble(row.endCorrection);
     row.bridgeReduction = json["bridgeReduction"].toDouble(row.bridgeReduction);
+    if (row.segmentLengthMm <= 0.0) {
+        row.segmentLengthMm = arcSegmentTargetLengthMm(row.radiusMm);
+    }
     return row;
 }
 
@@ -139,18 +192,9 @@ QList<AngleBendTableRow> AppSettings::createDefaultAngleBendTable()
 QList<ArcBendTableRow> AppSettings::createDefaultArcBendTable()
 {
     QList<ArcBendTableRow> rows;
-    const int defaultHits = qRound(90.0 / DefaultArcHitAngleDeg);
-    const double defaultValue = DefaultArcHitAngleDeg * 100.0;
 
     auto appendRadius = [&](double radiusMm) {
-        ArcBendTableRow row;
-        row.radiusMm = radiusMm;
-        row.hits = defaultHits;
-        row.right90 = defaultValue;
-        row.right45 = defaultValue;
-        row.left90 = defaultValue;
-        row.left45 = defaultValue;
-        rows.append(row);
+        rows.append(defaultArcBendRow(radiusMm));
     };
 
     for (int radius = 1; radius <= 10; ++radius) {

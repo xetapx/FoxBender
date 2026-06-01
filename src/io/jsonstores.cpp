@@ -1,5 +1,6 @@
 #include "jsonstores.h"
 
+#include <QFileInfo>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -42,6 +43,23 @@ QList<ArcBendTableRow> arcBendTableFromJsonArray(const QJsonArray &array)
         rows.append(ArcBendTableRow::fromJson(value.toObject()));
     }
     return rows;
+}
+
+QString bendParametersNameFromFilePath(const QString &filePath)
+{
+    const QString baseName = QFileInfo(filePath).completeBaseName().trimmed();
+    if (baseName.isEmpty()) {
+        return QStringLiteral("Default");
+    }
+
+    if (baseName.startsWith(QStringLiteral("bend_"))) {
+        const QString derivedName = baseName.mid(5);
+        if (!derivedName.isEmpty()) {
+            return derivedName;
+        }
+    }
+
+    return baseName;
 }
 
 bool writeJsonFile(const QString &filePath, const QJsonObject &json, QString *errorMessage)
@@ -122,6 +140,9 @@ bool JsonSettingsStore::load(const QString &filePath, AppSettings *settings, QSt
 bool JsonBendParametersStore::save(const QString &filePath, const AppSettings &settings, QString *errorMessage)
 {
     QJsonObject json;
+    json["name"] = settings.bendParametersName;
+    json["description"] = settings.bendParametersDescription;
+    json["notes"] = settings.bendParametersNotes;
     json["angleBendTable"] = angleBendTableArray(settings.angleBendTable);
     json["arcBendTable"] = arcBendTableArray(settings.arcBendTable);
     return writeJsonFile(filePath, json, errorMessage);
@@ -135,6 +156,12 @@ bool JsonBendParametersStore::load(const QString &filePath, AppSettings *setting
     }
 
     if (settings != nullptr) {
+        settings->bendParametersName = json["name"].toString().trimmed();
+        if (settings->bendParametersName.isEmpty()) {
+            settings->bendParametersName = bendParametersNameFromFilePath(filePath);
+        }
+        settings->bendParametersDescription = json["description"].toString();
+        settings->bendParametersNotes = json["notes"].toString();
         const QList<AngleBendTableRow> angleRows = angleBendTableFromJsonArray(json["angleBendTable"].toArray());
         const QList<ArcBendTableRow> arcRows = arcBendTableFromJsonArray(json["arcBendTable"].toArray());
         settings->angleBendTable = angleRows.isEmpty() ? AppSettings::createDefaultAngleBendTable() : angleRows;

@@ -469,45 +469,111 @@
                <item row="0" column="0">
                 <widget class="QLabel" name="labelBendParametersName">
                  <property name="text">
-                  <string>File</string>
+                  <string>Name</string>
                  </property>
                 </widget>
                </item>
                <item row="0" column="1">
-                <widget class="QLabel" name="bendParametersNameValue">
+                <widget class="QLineEdit" name="bendParametersNameEdit">
                  <property name="text">
-                  <string>bendparameters.json</string>
+                  <string>Default</string>
                  </property>
                 </widget>
                </item>
                <item row="1" column="0">
+                <widget class="QLabel" name="labelBendParametersDescription">
+                 <property name="text">
+                  <string>Description</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="1" column="1">
+                <widget class="QLineEdit" name="bendParametersDescriptionEdit"/>
+               </item>
+               <item row="2" column="0">
+                <widget class="QLabel" name="labelBendParametersNotes">
+                 <property name="text">
+                  <string>Notes</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="2" column="1">
+                <widget class="QPlainTextEdit" name="bendParametersNotesEdit">
+                 <property name="maximumHeight">
+                  <number>70</number>
+                 </property>
+                </widget>
+               </item>
+               <item row="3" column="0">
+                <widget class="QLabel" name="labelBendParametersFile">
+                 <property name="text">
+                  <string>File</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="3" column="1">
+                <widget class="QLabel" name="bendParametersFileValue">
+                 <property name="text">
+                  <string>bend_default.json</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="4" column="0">
                 <widget class="QLabel" name="labelBendParametersModified">
                  <property name="text">
                   <string>Last modified</string>
                  </property>
                 </widget>
                </item>
-               <item row="1" column="1">
+               <item row="4" column="1">
                 <widget class="QLabel" name="bendParametersModifiedValue">
                  <property name="text">
                   <string>-</string>
                  </property>
                 </widget>
                </item>
-               <item row="2" column="0" colspan="2">
-                <layout class="QHBoxLayout" name="horizontalLayout_12">
+               <item row="5" column="0">
+                <widget class="QLabel" name="labelAvailableBendParameters">
+                 <property name="text">
+                  <string>Available</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="5" column="1">
+                <layout class="QHBoxLayout" name="horizontalLayout_13">
                  <item>
-                  <widget class="QPushButton" name="openBendParametersButton">
+                  <widget class="QComboBox" name="bendParametersFileComboBox"/>
+                 </item>
+                 <item>
+                  <widget class="QPushButton" name="loadBendParametersButton">
                    <property name="text">
-                    <string>Open...</string>
+                    <string>Load</string>
                    </property>
                   </widget>
                  </item>
+                </layout>
+               </item>
+               <item row="6" column="0" colspan="2">
+                <layout class="QHBoxLayout" name="horizontalLayout_12">
                  <item>
-                  <widget class="QPushButton" name="saveBendParametersButton">
-                   <property name="text">
-                    <string>Save</string>
-                   </property>
+                 <widget class="QPushButton" name="openBendParametersButton">
+                  <property name="text">
+                   <string>Open...</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QPushButton" name="newBendParametersButton">
+                  <property name="text">
+                   <string>New...</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QPushButton" name="saveBendParametersButton">
+                  <property name="text">
+                   <string>Save</string>
+                  </property>
                   </widget>
                  </item>
                  <item>
@@ -633,7 +699,7 @@
                <item>
                 <widget class="QTableWidget" name="arcBendTableWidget">
                  <property name="columnCount">
-                  <number>10</number>
+                  <number>12</number>
                  </property>
                  <column>
                   <property name="text">
@@ -642,7 +708,17 @@
                  </column>
                  <column>
                   <property name="text">
-                   <string>Hits</string>
+                   <string>Segment length</string>
+                  </property>
+                 </column>
+                 <column>
+                  <property name="text">
+                   <string>Segments</string>
+                  </property>
+                 </column>
+                 <column>
+                  <property name="text">
+                   <string>Degrees</string>
                   </property>
                  </column>
                  <column>
