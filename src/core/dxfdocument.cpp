@@ -1,6 +1,70 @@
 #include "dxfdocument.h"
 
+#include <QJsonArray>
 #include <QtMath>
+
+namespace
+{
+QString colorToString(const QColor &color)
+{
+    return color.name(QColor::HexRgb);
+}
+
+QColor colorFromJson(const QJsonValue &value, const QColor &fallback = Qt::black)
+{
+    const QString text = value.toString();
+    const QColor color(text);
+    return color.isValid() ? color : fallback;
+}
+
+QJsonArray pointArray(const QVector<QPointF> &points)
+{
+    QJsonArray array;
+    for (const QPointF &point : points) {
+        QJsonObject object;
+        object["x"] = point.x();
+        object["y"] = point.y();
+        array.append(object);
+    }
+    return array;
+}
+
+QVector<QPointF> pointsFromJson(const QJsonArray &array)
+{
+    QVector<QPointF> points;
+    points.reserve(array.size());
+    for (const QJsonValue &value : array) {
+        const QJsonObject object = value.toObject();
+        points.append(QPointF(object["x"].toDouble(), object["y"].toDouble()));
+    }
+    return points;
+}
+
+QString entityTypeToString(DxfEntityType type)
+{
+    switch (type) {
+    case DxfEntityType::Line:
+        return QStringLiteral("LINE");
+    case DxfEntityType::Arc:
+        return QStringLiteral("ARC");
+    case DxfEntityType::Polyline:
+        return QStringLiteral("POLYLINE");
+    }
+
+    return QStringLiteral("LINE");
+}
+
+DxfEntityType entityTypeFromJson(const QString &type)
+{
+    if (type == QStringLiteral("ARC")) {
+        return DxfEntityType::Arc;
+    }
+    if (type == QStringLiteral("POLYLINE")) {
+        return DxfEntityType::Polyline;
+    }
+    return DxfEntityType::Line;
+}
+}
 
 bool DxfDocument::isEmpty() const
 {
@@ -45,6 +109,81 @@ QRectF DxfDocument::boundingRect() const
     }
 
     return bounds.adjusted(-20.0, -20.0, 20.0, 20.0);
+}
+
+QJsonObject DxfDocument::toJson() const
+{
+    QJsonObject json;
+    json["sourceName"] = sourceName;
+
+    QJsonArray layerArray;
+    for (const LayerDefinition &layer : layers) {
+        QJsonObject layerJson;
+        layerJson["name"] = layer.name;
+        layerJson["color"] = colorToString(layer.color);
+        layerJson["visible"] = layer.visible;
+        layerJson["locked"] = layer.locked;
+        layerArray.append(layerJson);
+    }
+    json["layers"] = layerArray;
+
+    QJsonArray entityArray;
+    for (const DxfEntity &entity : entities) {
+        QJsonObject entityJson;
+        entityJson["id"] = entity.id;
+        entityJson["sourceHandle"] = entity.sourceHandle;
+        entityJson["type"] = entityTypeToString(entity.type);
+        entityJson["layerName"] = entity.layerName;
+        entityJson["color"] = colorToString(entity.color);
+        entityJson["points"] = pointArray(entity.points);
+        entityJson["centerX"] = entity.center.x();
+        entityJson["centerY"] = entity.center.y();
+        entityJson["radius"] = entity.radius;
+        entityJson["startAngleDeg"] = entity.startAngleDeg;
+        entityJson["endAngleDeg"] = entity.endAngleDeg;
+        entityArray.append(entityJson);
+    }
+    json["entities"] = entityArray;
+
+    return json;
+}
+
+DxfDocument DxfDocument::fromJson(const QJsonObject &json)
+{
+    DxfDocument document;
+    document.sourceName = json["sourceName"].toString();
+
+    const QJsonArray layerArray = json["layers"].toArray();
+    document.layers.reserve(layerArray.size());
+    for (const QJsonValue &value : layerArray) {
+        const QJsonObject layerJson = value.toObject();
+        LayerDefinition layer;
+        layer.name = layerJson["name"].toString();
+        layer.color = colorFromJson(layerJson["color"], layer.color);
+        layer.visible = layerJson.contains("visible") ? layerJson["visible"].toBool(true) : true;
+        layer.locked = layerJson["locked"].toBool(false);
+        document.layers.append(layer);
+    }
+
+    const QJsonArray entityArray = json["entities"].toArray();
+    document.entities.reserve(entityArray.size());
+    for (const QJsonValue &value : entityArray) {
+        const QJsonObject entityJson = value.toObject();
+        DxfEntity entity;
+        entity.id = entityJson["id"].toString();
+        entity.sourceHandle = entityJson["sourceHandle"].toString();
+        entity.type = entityTypeFromJson(entityJson["type"].toString());
+        entity.layerName = entityJson["layerName"].toString();
+        entity.color = colorFromJson(entityJson["color"], entity.color);
+        entity.points = pointsFromJson(entityJson["points"].toArray());
+        entity.center = QPointF(entityJson["centerX"].toDouble(), entityJson["centerY"].toDouble());
+        entity.radius = entityJson["radius"].toDouble();
+        entity.startAngleDeg = entityJson["startAngleDeg"].toDouble();
+        entity.endAngleDeg = entityJson["endAngleDeg"].toDouble();
+        document.entities.append(entity);
+    }
+
+    return document;
 }
 
 DxfDocument DxfDocument::createDemoDocument()

@@ -4,6 +4,7 @@
 #include "dxfentity.h"
 #include "layerdefinition.h"
 
+#include <QJsonObject>
 #include <QList>
 #include <QRectF>
 #include <QString>
@@ -17,6 +18,8 @@ public:
 
     bool isEmpty() const;
     QRectF boundingRect() const;
+    QJsonObject toJson() const;
+    static DxfDocument fromJson(const QJsonObject &json);
 
     static DxfDocument createDemoDocument();
 };

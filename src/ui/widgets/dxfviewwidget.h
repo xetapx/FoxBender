@@ -37,7 +37,7 @@ public:
         QColor breakPreviewColor = QColor(0, 120, 255);
         QColor startFlagColor = QColor(0, 170, 110);
         QColor endFlagColor = QColor(255, 140, 0);
-        QColor portColor = QColor(230, 40, 140);
+        QColor bridgeColor = QColor(230, 40, 140);
         bool fillFlags = true;
         double flagScale = 1.0;
         double handleScale = 1.0;
@@ -50,17 +50,18 @@ public:
     void setRuleProfileEntityIndexes(const QList<int> &entityIndexes);
     void setActiveRuleProfileEntityIndexes(const QList<int> &entityIndexes);
     void setCandidateEntityIndexes(const QList<int> &entityIndexes);
+    void setModifiedSegmentEntityIndexes(const QList<int> &entityIndexes);
     void setTreeSelectionEntityIndexes(const QList<int> &entityIndexes);
-    void setHighlightedPortIndexes(const QList<int> &portIndexes);
-    void setTreeSelectionPortIndexes(const QList<int> &portIndexes);
+    void setHighlightedBridgeIndexes(const QList<int> &bridgeIndexes);
+    void setTreeSelectionBridgeIndexes(const QList<int> &bridgeIndexes);
     void setHoveredCandidateEntityIndexes(const QList<int> &entityIndexes);
-    void setHoveredPortIndexes(const QList<int> &portIndexes);
+    void setHoveredBridgeIndexes(const QList<int> &bridgeIndexes);
     void setRuleProfileGuide(const QPointF &startPoint,
                              const QPointF &nextPoint,
                              bool showArrow,
                              const QPointF &openPoint,
                              bool showOpenPoint);
-    void setDetectedPorts(const QList<DetectedPort> &ports);
+    void setDetectedBridges(const QList<DetectedBridge> &bridges);
     void setViewColors(const ViewColors &colors);
     void setBreakPreviewEnabled(bool enabled);
     void setPendingTrimPreview(const QPointF &modelPoint, bool visible);
@@ -96,9 +97,9 @@ private:
     void clearBreakPreview();
     void clearPendingTrimPreview();
     void clearRuleProfileGuide();
-    void clearPortItems();
+    void clearBridgeItems();
     void renderRuleProfileGuide();
-    void renderDetectedPorts();
+    void renderDetectedBridges();
     QGraphicsItem *findEntityItemAt(const QPoint &viewPos, int radiusPixels = 6) const;
     QGraphicsItem *findHandleItemAt(const QPoint &viewPos) const;
     QPointF closestPointOnBreakEntity(int entityIndex, const QPointF &scenePos) const;
@@ -111,11 +112,12 @@ private:
     QList<int> m_ruleProfileEntityIndexes;
     QList<int> m_activeRuleProfileEntityIndexes;
     QList<int> m_candidateEntityIndexes;
+    QList<int> m_modifiedSegmentEntityIndexes;
     QList<int> m_treeSelectionEntityIndexes;
-    QList<int> m_highlightedPortIndexes;
-    QList<int> m_treeSelectionPortIndexes;
+    QList<int> m_highlightedBridgeIndexes;
+    QList<int> m_treeSelectionBridgeIndexes;
     QList<int> m_hoveredCandidateEntityIndexes;
-    QList<int> m_hoveredPortIndexes;
+    QList<int> m_hoveredBridgeIndexes;
     ViewColors m_viewColors;
     QRectF m_viewSceneRect;
     int m_selectedEntityIndex = -1;
@@ -125,8 +127,8 @@ private:
     QPointF m_lastPanScenePos;
     QList<QGraphicsItem *> m_handleItems;
     QList<QGraphicsItem *> m_ruleProfileGuideItems;
-    QList<QGraphicsItem *> m_portItems;
-    QList<DetectedPort> m_detectedPorts;
+    QList<QGraphicsItem *> m_bridgeItems;
+    QList<DetectedBridge> m_detectedBridges;
     int m_hoveredHandleEntityIndex = -1;
     int m_hoveredHandleType = -1;
     int m_hoveredHandleIndex = -1;

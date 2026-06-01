@@ -5,7 +5,9 @@
 #include <QCoreApplication>
 #include <QCheckBox>
 #include <QColorDialog>
+#include <QCloseEvent>
 #include <QAction>
+#include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -17,6 +19,7 @@
 #include <QMessageBox>
 #include <QMenu>
 #include <QPainter>
+#include <QPixmap>
 #include <QSignalBlocker>
 #include <QPushButton>
 #include <QShortcut>
@@ -29,6 +32,7 @@
 #include <QUndoCommand>
 #include <QUndoStack>
 #include <QLineF>
+#include <optional>
 #include <QtMath>
 
 namespace
@@ -37,20 +41,85 @@ constexpr int BladeTreeItemTypeRole = Qt::UserRole + 1;
 constexpr int BladeTreePathIndexRole = Qt::UserRole + 2;
 constexpr int BladeTreeEntityIndexRole = Qt::UserRole + 3;
 constexpr int BladeTreeEntityIdsRole = Qt::UserRole + 4;
-constexpr int BladeTreePortIndexesRole = Qt::UserRole + 5;
-constexpr int BladeTreePortIndexRole = Qt::UserRole + 6;
+constexpr int BladeTreeBridgeIndexesRole = Qt::UserRole + 5;
+constexpr int BladeTreeBridgeIndexRole = Qt::UserRole + 6;
+constexpr int BladeTreeOptionKeyRole = Qt::UserRole + 7;
+constexpr int BladeTreeFamilyIndexRole = Qt::UserRole + 8;
+constexpr int BladeTreeFamilyAngleRole = Qt::UserRole + 9;
 constexpr int ToolStationIdRole = Qt::UserRole + 10;
 
 constexpr int BladeTreeItemTypePath = 1;
 constexpr int BladeTreeItemTypeSegment = 2;
 constexpr int BladeTreeItemTypeFamily = 3;
-constexpr int BladeTreeItemTypePort = 4;
+constexpr int BladeTreeItemTypeBridge = 4;
 constexpr int LayerNameRole = Qt::UserRole + 20;
 constexpr int MaxRecentFiles = 10;
+
+constexpr const char *RuleProfileOptionCountKey = "count";
+constexpr const char *RuleProfileOptionMirrorKey = "mirror";
+constexpr const char *RuleProfileOptionStartCorrectionKey = "startCorrectionMm";
+constexpr const char *RuleProfileOptionEndCorrectionKey = "endCorrectionMm";
+constexpr const char *RuleProfileOptionStartLipKey = "startLip";
+constexpr const char *RuleProfileOptionEndLipKey = "endLip";
+constexpr const char *RuleProfileSegmentAngleCorrectionKey = "segmentAngleCorrectionDeg";
+constexpr const char *RuleProfileSegmentLengthCorrectionKey = "segmentLengthCorrectionMm";
+constexpr const char *RuleProfileSegmentOpenModeKey = "segmentOpenMode";
+
+QStringList arcOpenModeOptions()
+{
+    return {
+        QStringLiteral("Normal"),
+        QStringLiteral("1/5"),
+        QStringLiteral("2/3"),
+        QStringLiteral("1/2"),
+        QStringLiteral("All open")
+    };
+}
+
+double interpolateLinear(double targetX,
+                         double leftX,
+                         double leftY,
+                         double rightX,
+                         double rightY)
+{
+    if (qFuzzyCompare(leftX + 1.0, rightX + 1.0)) {
+        return leftY;
+    }
+
+    const double t = (targetX - leftX) / (rightX - leftX);
+    return leftY + (rightY - leftY) * t;
+}
+
+void sortAngleBendTable(QList<AngleBendTableRow> *rows)
+{
+    if (rows == nullptr) {
+        return;
+    }
+
+    std::sort(rows->begin(), rows->end(), [](const AngleBendTableRow &left, const AngleBendTableRow &right) {
+        return left.angleDeg < right.angleDeg;
+    });
+}
+
+void sortArcBendTable(QList<ArcBendTableRow> *rows)
+{
+    if (rows == nullptr) {
+        return;
+    }
+
+    std::sort(rows->begin(), rows->end(), [](const ArcBendTableRow &left, const ArcBendTableRow &right) {
+        return left.radiusMm < right.radiusMm;
+    });
+}
 
 QString settingsFilePath()
 {
     return QCoreApplication::applicationDirPath() + QStringLiteral("/settings.json");
+}
+
+QString bendParametersFilePath()
+{
+    return QCoreApplication::applicationDirPath() + QStringLiteral("/bendparameters.json");
 }
 
 QString treeItemKey(const QTreeWidgetItem *item)
@@ -272,7 +341,7 @@ bool linesShareInfiniteLine(const DxfEntity &left, const DxfEntity &right, doubl
            && pointDistanceToInfiniteLine(right.points.at(1), left.points.at(0), leftUnit) <= tolerance;
 }
 
-QList<DetectedPort> detectLinePorts(const DxfDocument &document,
+QList<DetectedBridge> detectLineBridges(const DxfDocument &document,
                                     double minGapMm,
                                     double maxGapMm,
                                     double tolerance)
@@ -300,7 +369,7 @@ QList<DetectedPort> detectLinePorts(const DxfDocument &document,
         }
     }
 
-    QList<DetectedPort> ports;
+    QList<DetectedBridge> bridges;
     QVector<bool> visited(lineEntityIndexes.size(), false);
     for (int groupSeed = 0; groupSeed < lineEntityIndexes.size(); ++groupSeed) {
         if (visited.at(groupSeed)) {
@@ -368,13 +437,13 @@ QList<DetectedPort> detectLinePorts(const DxfDocument &document,
 
             const double gapLength = next.minT - current.maxT;
             if (gapLength >= minGapMm - tolerance && gapLength <= maxGapMm + tolerance) {
-                DetectedPort port;
-                port.type = DetectedPortType::Line;
-                port.startPoint = origin + axisUnit * current.maxT;
-                port.endPoint = origin + axisUnit * next.minT;
-                port.lengthMm = gapLength;
-                port.relatedEntityIndexes = {current.rightEntityIndex, next.entityIndex};
-                ports.append(port);
+                DetectedBridge bridge;
+                bridge.type = DetectedBridgeType::Line;
+                bridge.startPoint = origin + axisUnit * current.maxT;
+                bridge.endPoint = origin + axisUnit * next.minT;
+                bridge.lengthMm = gapLength;
+                bridge.relatedEntityIndexes = {current.rightEntityIndex, next.entityIndex};
+                bridges.append(bridge);
             }
 
             current.minT = next.minT;
@@ -384,10 +453,10 @@ QList<DetectedPort> detectLinePorts(const DxfDocument &document,
         }
     }
 
-    return ports;
+    return bridges;
 }
 
-QList<DetectedPort> detectArcPorts(const DxfDocument &document,
+QList<DetectedBridge> detectArcBridges(const DxfDocument &document,
                                    double minGapMm,
                                    double maxGapMm,
                                    double tolerance)
@@ -415,7 +484,7 @@ QList<DetectedPort> detectArcPorts(const DxfDocument &document,
         }
     }
 
-    QList<DetectedPort> ports;
+    QList<DetectedBridge> bridges;
     QVector<bool> visited(arcEntityIndexes.size(), false);
     for (int groupSeed = 0; groupSeed < arcEntityIndexes.size(); ++groupSeed) {
         if (visited.at(groupSeed)) {
@@ -516,34 +585,34 @@ QList<DetectedPort> detectArcPorts(const DxfDocument &document,
                 continue;
             }
 
-            DetectedPort port;
-            port.type = DetectedPortType::Arc;
-            port.center = base.center;
-            port.radius = base.radius;
-            port.startAngleDeg = currentCoverage.endDeg;
-            port.endAngleDeg = normalizeAngle360(currentCoverage.endDeg + gapDeg);
-            port.lengthMm = arcLength;
-            port.startPoint = arcPointAtAngle(base.center, base.radius, port.startAngleDeg);
-            port.endPoint = arcPointAtAngle(base.center, base.radius, port.endAngleDeg);
-            port.relatedEntityIndexes = {currentCoverage.endEntityIndex, nextCoverage.startEntityIndex};
-            ports.append(port);
+            DetectedBridge bridge;
+            bridge.type = DetectedBridgeType::Arc;
+            bridge.center = base.center;
+            bridge.radius = base.radius;
+            bridge.startAngleDeg = currentCoverage.endDeg;
+            bridge.endAngleDeg = normalizeAngle360(currentCoverage.endDeg + gapDeg);
+            bridge.lengthMm = arcLength;
+            bridge.startPoint = arcPointAtAngle(base.center, base.radius, bridge.startAngleDeg);
+            bridge.endPoint = arcPointAtAngle(base.center, base.radius, bridge.endAngleDeg);
+            bridge.relatedEntityIndexes = {currentCoverage.endEntityIndex, nextCoverage.startEntityIndex};
+            bridges.append(bridge);
         }
     }
 
-    return ports;
+    return bridges;
 }
 
-QList<DetectedPort> detectPorts(const DxfDocument &document,
+QList<DetectedBridge> detectBridges(const DxfDocument &document,
                                 double minGapMm,
                                 double maxGapMm,
                                 double tolerance)
 {
-    QList<DetectedPort> ports = detectLinePorts(document, minGapMm, maxGapMm, tolerance);
-    const QList<DetectedPort> arcPorts = detectArcPorts(document, minGapMm, maxGapMm, tolerance);
-    for (const DetectedPort &port : arcPorts) {
-        ports.append(port);
+    QList<DetectedBridge> bridges = detectLineBridges(document, minGapMm, maxGapMm, tolerance);
+    const QList<DetectedBridge> arcBridges = detectArcBridges(document, minGapMm, maxGapMm, tolerance);
+    for (const DetectedBridge &bridge : arcBridges) {
+        bridges.append(bridge);
     }
-    return ports;
+    return bridges;
 }
 
 void drawPreviewFlag(QPainter &painter,
@@ -618,7 +687,7 @@ struct DirectedPendingEntityInfo
 
 PendingRuleProfileState pendingRuleProfileState(const DxfDocument &document,
                                             const QStringList &pendingEntityIds,
-                                            const QList<DetectedPort> &ports);
+                                            const QList<DetectedBridge> &bridges);
 
 QPointF normalizedVector(const QPointF &vector)
 {
@@ -642,6 +711,72 @@ double dotProduct(const QPointF &left, const QPointF &right)
 bool pointsNear(const QPointF &left, const QPointF &right, double tolerance = 0.01)
 {
     return QLineF(left, right).length() <= tolerance;
+}
+
+PathEndpointInfo endpointInfoForEntity(const DxfEntity &entity);
+
+double signedTurnDegrees(const QPointF &fromVector, const QPointF &toVector)
+{
+    const QPointF normalizedFrom = normalizedVector(fromVector);
+    const QPointF normalizedTo = normalizedVector(toVector);
+    if (qFuzzyIsNull(std::hypot(normalizedFrom.x(), normalizedFrom.y()))
+        || qFuzzyIsNull(std::hypot(normalizedTo.x(), normalizedTo.y()))) {
+        return 0.0;
+    }
+
+    return qRadiansToDegrees(std::atan2(crossProduct(normalizedFrom, normalizedTo),
+                                        dotProduct(normalizedFrom, normalizedTo)));
+}
+
+bool directedTangentsForEntity(const DxfEntity &entity,
+                               const QPointF &pathStartPoint,
+                               const QPointF &pathEndPoint,
+                               QPointF *entryTangent,
+                               QPointF *exitTangent)
+{
+    if (entryTangent == nullptr || exitTangent == nullptr) {
+        return false;
+    }
+
+    if (entity.type == DxfEntityType::Line && entity.points.size() >= 2) {
+        const QPointF tangent = normalizedVector(pathEndPoint - pathStartPoint);
+        if (qFuzzyIsNull(std::hypot(tangent.x(), tangent.y()))) {
+            return false;
+        }
+        *entryTangent = tangent;
+        *exitTangent = tangent;
+        return true;
+    }
+
+    if (entity.type != DxfEntityType::Arc || qFuzzyIsNull(entity.radius)) {
+        return false;
+    }
+
+    const PathEndpointInfo endpointInfo = endpointInfoForEntity(entity);
+    if (!endpointInfo.valid) {
+        return false;
+    }
+
+    const bool forward = pointsNear(pathStartPoint, endpointInfo.startPoint)
+                         && pointsNear(pathEndPoint, endpointInfo.endPoint);
+    const bool reverse = pointsNear(pathStartPoint, endpointInfo.endPoint)
+                         && pointsNear(pathEndPoint, endpointInfo.startPoint);
+    if (!forward && !reverse) {
+        return false;
+    }
+
+    const auto tangentAtPoint = [&](const QPointF &point, bool ccwDirection) {
+        const double angleRad = std::atan2(point.y() - entity.center.y(), point.x() - entity.center.x());
+        QPointF tangent(-std::sin(angleRad), std::cos(angleRad));
+        if (!ccwDirection) {
+            tangent = -tangent;
+        }
+        return normalizedVector(tangent);
+    };
+
+    *entryTangent = tangentAtPoint(pathStartPoint, forward);
+    *exitTangent = tangentAtPoint(pathEndPoint, forward);
+    return true;
 }
 
 QPointF entityMidPointForOrdering(const DxfEntity &entity)
@@ -755,35 +890,35 @@ QList<int> mergeUniqueIndexes(const QList<int> &left, const QList<int> &right)
     return merged;
 }
 
-bool portEndpointsForEntities(const QList<DetectedPort> &ports,
-                              int firstEntityIndex,
-                              int secondEntityIndex,
-                              QPointF *firstPortPoint,
-                              QPointF *secondPortPoint)
+bool bridgeEndpointsForEntities(const QList<DetectedBridge> &bridges,
+                                int firstEntityIndex,
+                                int secondEntityIndex,
+                                QPointF *firstBridgePoint,
+                                QPointF *secondBridgePoint)
 {
-    for (const DetectedPort &port : ports) {
-        if (port.relatedEntityIndexes.size() != 2) {
+    for (const DetectedBridge &bridge : bridges) {
+        if (bridge.relatedEntityIndexes.size() != 2) {
             continue;
         }
 
-        if (port.relatedEntityIndexes.at(0) == firstEntityIndex
-            && port.relatedEntityIndexes.at(1) == secondEntityIndex) {
-            if (firstPortPoint != nullptr) {
-                *firstPortPoint = port.startPoint;
+        if (bridge.relatedEntityIndexes.at(0) == firstEntityIndex
+            && bridge.relatedEntityIndexes.at(1) == secondEntityIndex) {
+            if (firstBridgePoint != nullptr) {
+                *firstBridgePoint = bridge.startPoint;
             }
-            if (secondPortPoint != nullptr) {
-                *secondPortPoint = port.endPoint;
+            if (secondBridgePoint != nullptr) {
+                *secondBridgePoint = bridge.endPoint;
             }
             return true;
         }
 
-        if (port.relatedEntityIndexes.at(0) == secondEntityIndex
-            && port.relatedEntityIndexes.at(1) == firstEntityIndex) {
-            if (firstPortPoint != nullptr) {
-                *firstPortPoint = port.endPoint;
+        if (bridge.relatedEntityIndexes.at(0) == secondEntityIndex
+            && bridge.relatedEntityIndexes.at(1) == firstEntityIndex) {
+            if (firstBridgePoint != nullptr) {
+                *firstBridgePoint = bridge.endPoint;
             }
-            if (secondPortPoint != nullptr) {
-                *secondPortPoint = port.startPoint;
+            if (secondBridgePoint != nullptr) {
+                *secondBridgePoint = bridge.startPoint;
             }
             return true;
         }
@@ -792,7 +927,7 @@ bool portEndpointsForEntities(const QList<DetectedPort> &ports,
     return false;
 }
 
-bool entitiesConnectedAtAnyEndpoint(const QList<DetectedPort> &ports,
+bool entitiesConnectedAtAnyEndpoint(const QList<DetectedBridge> &bridges,
                                     int firstEntityIndex,
                                     const PathEndpointInfo &firstInfo,
                                     int secondEntityIndex,
@@ -805,21 +940,21 @@ bool entitiesConnectedAtAnyEndpoint(const QList<DetectedPort> &ports,
         return true;
     }
 
-    QPointF firstPortPoint;
-    QPointF secondPortPoint;
-    if (!portEndpointsForEntities(ports,
-                                  firstEntityIndex,
-                                  secondEntityIndex,
-                                  &firstPortPoint,
-                                  &secondPortPoint)) {
+    QPointF firstBridgePoint;
+    QPointF secondBridgePoint;
+    if (!bridgeEndpointsForEntities(bridges,
+                                    firstEntityIndex,
+                                    secondEntityIndex,
+                                    &firstBridgePoint,
+                                    &secondBridgePoint)) {
         return false;
     }
 
-    return (pointsNear(firstInfo.startPoint, firstPortPoint) || pointsNear(firstInfo.endPoint, firstPortPoint))
-           && (pointsNear(secondInfo.startPoint, secondPortPoint) || pointsNear(secondInfo.endPoint, secondPortPoint));
+    return (pointsNear(firstInfo.startPoint, firstBridgePoint) || pointsNear(firstInfo.endPoint, firstBridgePoint))
+           && (pointsNear(secondInfo.startPoint, secondBridgePoint) || pointsNear(secondInfo.endPoint, secondBridgePoint));
 }
 
-bool tryConnectToNextEntity(const QList<DetectedPort> &ports,
+bool tryConnectToNextEntity(const QList<DetectedBridge> &bridges,
                             int currentEntityIndex,
                             const PathEndpointInfo &/*currentInfo*/,
                             const QPointF &currentOpenPoint,
@@ -840,24 +975,24 @@ bool tryConnectToNextEntity(const QList<DetectedPort> &ports,
         return true;
     }
 
-    QPointF currentPortPoint;
-    QPointF nextPortPoint;
-    if (!portEndpointsForEntities(ports,
-                                  currentEntityIndex,
-                                  nextEntityIndex,
-                                  &currentPortPoint,
-                                  &nextPortPoint)
-        || !pointsNear(currentOpenPoint, currentPortPoint)) {
+    QPointF currentBridgePoint;
+    QPointF nextBridgePoint;
+    if (!bridgeEndpointsForEntities(bridges,
+                                    currentEntityIndex,
+                                    nextEntityIndex,
+                                    &currentBridgePoint,
+                                    &nextBridgePoint)
+        || !pointsNear(currentOpenPoint, currentBridgePoint)) {
         return false;
     }
 
-    if (pointsNear(nextInfo.startPoint, nextPortPoint)) {
+    if (pointsNear(nextInfo.startPoint, nextBridgePoint)) {
         if (nextOpenPoint != nullptr) {
             *nextOpenPoint = nextInfo.endPoint;
         }
         return true;
     }
-    if (pointsNear(nextInfo.endPoint, nextPortPoint)) {
+    if (pointsNear(nextInfo.endPoint, nextBridgePoint)) {
         if (nextOpenPoint != nullptr) {
             *nextOpenPoint = nextInfo.startPoint;
         }
@@ -867,23 +1002,23 @@ bool tryConnectToNextEntity(const QList<DetectedPort> &ports,
     return false;
 }
 
-QList<int> expandPortCandidates(const QList<DetectedPort> &ports,
-                                const QList<int> &pendingIndexes,
-                                const QList<int> &seedIndexes)
+QList<int> expandBridgeCandidates(const QList<DetectedBridge> &bridges,
+                                  const QList<int> &pendingIndexes,
+                                  const QList<int> &seedIndexes)
 {
     QList<int> expanded = seedIndexes;
     for (int queueIndex = 0; queueIndex < expanded.size(); ++queueIndex) {
         const int currentIndex = expanded.at(queueIndex);
-        for (const DetectedPort &port : ports) {
-            if (port.relatedEntityIndexes.size() != 2) {
+        for (const DetectedBridge &bridge : bridges) {
+            if (bridge.relatedEntityIndexes.size() != 2) {
                 continue;
             }
 
             int otherIndex = -1;
-            if (port.relatedEntityIndexes.at(0) == currentIndex) {
-                otherIndex = port.relatedEntityIndexes.at(1);
-            } else if (port.relatedEntityIndexes.at(1) == currentIndex) {
-                otherIndex = port.relatedEntityIndexes.at(0);
+            if (bridge.relatedEntityIndexes.at(0) == currentIndex) {
+                otherIndex = bridge.relatedEntityIndexes.at(1);
+            } else if (bridge.relatedEntityIndexes.at(1) == currentIndex) {
+                otherIndex = bridge.relatedEntityIndexes.at(0);
             } else {
                 continue;
             }
@@ -903,16 +1038,16 @@ QList<int> expandPortCandidates(const QList<DetectedPort> &ports,
     return expanded;
 }
 
-int findPortIndexForEntities(const QList<DetectedPort> &ports, int firstEntityIndex, int secondEntityIndex)
+int findBridgeIndexForEntities(const QList<DetectedBridge> &bridges, int firstEntityIndex, int secondEntityIndex)
 {
-    for (int portIndex = 0; portIndex < ports.size(); ++portIndex) {
-        const DetectedPort &port = ports.at(portIndex);
-        if (port.relatedEntityIndexes.size() != 2) {
+    for (int bridgeIndex = 0; bridgeIndex < bridges.size(); ++bridgeIndex) {
+        const DetectedBridge &bridge = bridges.at(bridgeIndex);
+        if (bridge.relatedEntityIndexes.size() != 2) {
             continue;
         }
-        if ((port.relatedEntityIndexes.at(0) == firstEntityIndex && port.relatedEntityIndexes.at(1) == secondEntityIndex)
-            || (port.relatedEntityIndexes.at(0) == secondEntityIndex && port.relatedEntityIndexes.at(1) == firstEntityIndex)) {
-            return portIndex;
+        if ((bridge.relatedEntityIndexes.at(0) == firstEntityIndex && bridge.relatedEntityIndexes.at(1) == secondEntityIndex)
+            || (bridge.relatedEntityIndexes.at(0) == secondEntityIndex && bridge.relatedEntityIndexes.at(1) == firstEntityIndex)) {
+            return bridgeIndex;
         }
     }
     return -1;
@@ -956,7 +1091,7 @@ bool entitiesDirectlyTouch(const PathEndpointInfo &firstInfo, const PathEndpoint
 }
 
 QList<int> sameFamilyNextEntities(const DxfDocument &document,
-                                  const QList<DetectedPort> &ports,
+                                  const QList<DetectedBridge> &bridges,
                                   int currentEntityIndex,
                                   int previousEntityIndex,
                                   const QList<int> &blockedIndexes,
@@ -984,7 +1119,7 @@ QList<int> sameFamilyNextEntities(const DxfDocument &document,
         }
 
         if (entitiesDirectlyTouch(currentInfo, candidateInfo)
-            || findPortIndexForEntities(ports, currentEntityIndex, index) >= 0) {
+            || findBridgeIndexForEntities(bridges, currentEntityIndex, index) >= 0) {
             nextIndexes.append(index);
         }
     }
@@ -993,7 +1128,7 @@ QList<int> sameFamilyNextEntities(const DxfDocument &document,
 }
 
 QList<int> sameFamilyNeighbors(const DxfDocument &document,
-                               const QList<DetectedPort> &ports,
+                               const QList<DetectedBridge> &bridges,
                                int currentEntityIndex,
                                const QList<int> &allowedIndexes,
                                double tolerance)
@@ -1022,7 +1157,7 @@ QList<int> sameFamilyNeighbors(const DxfDocument &document,
         }
 
         if (entitiesDirectlyTouch(currentInfo, candidateInfo)
-            || findPortIndexForEntities(ports, currentEntityIndex, candidateIndex) >= 0) {
+            || findBridgeIndexForEntities(bridges, currentEntityIndex, candidateIndex) >= 0) {
             neighbors.append(candidateIndex);
         }
     }
@@ -1031,7 +1166,7 @@ QList<int> sameFamilyNeighbors(const DxfDocument &document,
 }
 
 QList<int> buildCandidateChain(const DxfDocument &document,
-                               const QList<DetectedPort> &ports,
+                               const QList<DetectedBridge> &bridges,
                                int previousEntityIndex,
                                int seedEntityIndex,
                                const QList<int> &blockedIndexes,
@@ -1046,7 +1181,7 @@ QList<int> buildCandidateChain(const DxfDocument &document,
     for (int queueIndex = 0; queueIndex < component.size(); ++queueIndex) {
         const int currentEntityIndex = component.at(queueIndex);
         const QList<int> nextIndexes = sameFamilyNextEntities(document,
-                                                              ports,
+                                                              bridges,
                                                               currentEntityIndex,
                                                               -1,
                                                               mergeUniqueIndexes(blockedIndexes, component),
@@ -1068,7 +1203,7 @@ QList<int> buildCandidateChain(const DxfDocument &document,
         for (int candidateIndex : std::as_const(component)) {
             const PathEndpointInfo candidateInfo = endpointInfoForEntity(document.entities.at(candidateIndex));
             if (candidateInfo.valid
-                && entitiesConnectedAtAnyEndpoint(ports,
+                && entitiesConnectedAtAnyEndpoint(bridges,
                                                   previousEntityIndex,
                                                   previousInfo,
                                                   candidateIndex,
@@ -1082,7 +1217,7 @@ QList<int> buildCandidateChain(const DxfDocument &document,
     QList<int> endpoints;
     for (int candidateIndex : std::as_const(component)) {
         const QList<int> neighbors = sameFamilyNeighbors(document,
-                                                         ports,
+                                                         bridges,
                                                          candidateIndex,
                                                          component,
                                                          tolerance);
@@ -1110,7 +1245,7 @@ QList<int> buildCandidateChain(const DxfDocument &document,
     int previousChainIndex = -1;
     while (true) {
         const QList<int> neighbors = sameFamilyNeighbors(document,
-                                                         ports,
+                                                         bridges,
                                                          chain.last(),
                                                          component,
                                                          tolerance);
@@ -1142,7 +1277,7 @@ QList<int> buildCandidateChain(const DxfDocument &document,
 
 QList<int> candidateRuleProfileIndexes(const DxfDocument &document,
                                      const QStringList &pendingEntityIds,
-                                     const QList<DetectedPort> &ports)
+                                     const QList<DetectedBridge> &bridges)
 {
     QList<int> seedIndexes;
     if (pendingEntityIds.isEmpty()) {
@@ -1176,13 +1311,13 @@ QList<int> candidateRuleProfileIndexes(const DxfDocument &document,
             }
 
             QPointF unusedOpenPoint;
-            if (tryConnectToNextEntity(ports, firstIndex, firstInfo, firstInfo.startPoint, index, candidateInfo, &unusedOpenPoint)
-                || tryConnectToNextEntity(ports, firstIndex, firstInfo, firstInfo.endPoint, index, candidateInfo, &unusedOpenPoint)) {
+            if (tryConnectToNextEntity(bridges, firstIndex, firstInfo, firstInfo.startPoint, index, candidateInfo, &unusedOpenPoint)
+                || tryConnectToNextEntity(bridges, firstIndex, firstInfo, firstInfo.endPoint, index, candidateInfo, &unusedOpenPoint)) {
                 seedIndexes.append(index);
             }
         }
     } else {
-        const PendingRuleProfileState state = pendingRuleProfileState(document, pendingEntityIds, ports);
+        const PendingRuleProfileState state = pendingRuleProfileState(document, pendingEntityIds, bridges);
         if (!state.valid || state.openEntityIndex < 0 || state.openEntityIndex >= document.entities.size()) {
             return seedIndexes;
         }
@@ -1203,7 +1338,7 @@ QList<int> candidateRuleProfileIndexes(const DxfDocument &document,
             }
 
             QPointF nextOpenPoint;
-            if (tryConnectToNextEntity(ports,
+            if (tryConnectToNextEntity(bridges,
                                        state.openEntityIndex,
                                        openInfo,
                                        state.openPoint,
@@ -1215,17 +1350,17 @@ QList<int> candidateRuleProfileIndexes(const DxfDocument &document,
         }
     }
 
-    return expandPortCandidates(ports, pendingIndexes, seedIndexes);
+    return expandBridgeCandidates(bridges, pendingIndexes, seedIndexes);
 }
 
 QList<QList<int>> candidateRuleProfileChains(const DxfDocument &document,
                                            const QStringList &pendingEntityIds,
-                                           const QList<DetectedPort> &ports,
+                                           const QList<DetectedBridge> &bridges,
                                            double tolerance)
 {
     QList<QList<int>> chains;
     const QList<int> pendingIndexes = resolveRuleProfileIndexes(document, pendingEntityIds);
-    const QList<int> seedIndexes = candidateRuleProfileIndexes(document, pendingEntityIds, ports);
+    const QList<int> seedIndexes = candidateRuleProfileIndexes(document, pendingEntityIds, bridges);
     if (seedIndexes.isEmpty()) {
         return chains;
     }
@@ -1237,7 +1372,7 @@ QList<QList<int>> candidateRuleProfileChains(const DxfDocument &document,
 
     for (int seedIndex : seedIndexes) {
         QList<int> chain = buildCandidateChain(document,
-                                               ports,
+                                               bridges,
                                                previousEntityIndex,
                                                seedIndex,
                                                pendingIndexes,
@@ -1263,7 +1398,7 @@ QList<QList<int>> candidateRuleProfileChains(const DxfDocument &document,
 
 PendingRuleProfileState pendingRuleProfileState(const DxfDocument &document,
                                             const QStringList &pendingEntityIds,
-                                            const QList<DetectedPort> &ports)
+                                            const QList<DetectedBridge> &bridges)
 {
     PendingRuleProfileState state;
     if (pendingEntityIds.isEmpty()) {
@@ -1304,7 +1439,7 @@ PendingRuleProfileState pendingRuleProfileState(const DxfDocument &document,
     bool oriented = false;
 
     QPointF nextOpenPoint;
-    if (tryConnectToNextEntity(ports,
+    if (tryConnectToNextEntity(bridges,
                                entityIndexes.at(0),
                                first,
                                first.endPoint,
@@ -1315,7 +1450,7 @@ PendingRuleProfileState pendingRuleProfileState(const DxfDocument &document,
         state.nextPoint = first.endPoint;
         currentOpenPoint = nextOpenPoint;
         oriented = true;
-    } else if (tryConnectToNextEntity(ports,
+    } else if (tryConnectToNextEntity(bridges,
                                       entityIndexes.at(0),
                                       first,
                                       first.startPoint,
@@ -1337,7 +1472,7 @@ PendingRuleProfileState pendingRuleProfileState(const DxfDocument &document,
     for (int infoIndex = 2; infoIndex < infos.size(); ++infoIndex) {
         const PathEndpointInfo &info = infos.at(infoIndex);
         QPointF propagatedOpenPoint;
-        if (!tryConnectToNextEntity(ports,
+        if (!tryConnectToNextEntity(bridges,
                                     entityIndexes.at(infoIndex - 1),
                                     infos.at(infoIndex - 1),
                                     currentOpenPoint,
@@ -1357,7 +1492,7 @@ PendingRuleProfileState pendingRuleProfileState(const DxfDocument &document,
 
 QList<DirectedPendingEntityInfo> directedPendingEntityInfos(const DxfDocument &document,
                                                             const QStringList &pendingEntityIds,
-                                                            const QList<DetectedPort> &ports)
+                                                            const QList<DetectedBridge> &bridges)
 {
     QList<DirectedPendingEntityInfo> result;
     if (pendingEntityIds.isEmpty()) {
@@ -1395,7 +1530,7 @@ QList<DirectedPendingEntityInfo> directedPendingEntityInfos(const DxfDocument &d
 
     QPointF nextOpenPoint;
     QPointF currentOpenPoint;
-    if (tryConnectToNextEntity(ports,
+    if (tryConnectToNextEntity(bridges,
                                entityIndexes.at(0),
                                infos.at(0),
                                infos.at(0).endPoint,
@@ -1408,7 +1543,7 @@ QList<DirectedPendingEntityInfo> directedPendingEntityInfos(const DxfDocument &d
                                         : infos.at(1).startPoint;
         result.append({entityIndexes.at(1), secondStart, nextOpenPoint});
         currentOpenPoint = nextOpenPoint;
-    } else if (tryConnectToNextEntity(ports,
+    } else if (tryConnectToNextEntity(bridges,
                                       entityIndexes.at(0),
                                       infos.at(0),
                                       infos.at(0).startPoint,
@@ -1427,7 +1562,7 @@ QList<DirectedPendingEntityInfo> directedPendingEntityInfos(const DxfDocument &d
 
     for (int infoIndex = 2; infoIndex < infos.size(); ++infoIndex) {
         QPointF propagatedOpenPoint;
-        if (!tryConnectToNextEntity(ports,
+        if (!tryConnectToNextEntity(bridges,
                                     entityIndexes.at(infoIndex - 1),
                                     infos.at(infoIndex - 1),
                                     currentOpenPoint,
@@ -1607,6 +1742,13 @@ FilletResult createLineFillet(const DxfDocument &sourceDocument,
     const int firstFarIndex = firstNearIndex == 0 ? 1 : 0;
     const int secondFarIndex = secondNearIndex == 0 ? 1 : 0;
 
+    if (qFuzzyIsNull(radius)) {
+        firstLine.points[firstNearIndex] = intersectionPoint;
+        secondLine.points[secondNearIndex] = intersectionPoint;
+        result.success = true;
+        return result;
+    }
+
     const QPointF firstDirection = normalizedVector(firstLine.points.at(firstFarIndex) - intersectionPoint);
     const QPointF secondDirection = normalizedVector(secondLine.points.at(secondFarIndex) - intersectionPoint);
     if (qFuzzyIsNull(std::hypot(firstDirection.x(), firstDirection.y()))
@@ -1717,6 +1859,45 @@ private:
     DxfDocument m_after;
     bool m_firstRedo = true;
 };
+
+class ProjectDocumentEditCommand final : public QUndoCommand
+{
+public:
+    ProjectDocumentEditCommand(MainWindow *window,
+                               ProjectDocument before,
+                               ProjectDocument after,
+                               const QString &text)
+        : QUndoCommand(text)
+        , m_window(window)
+        , m_before(std::move(before))
+        , m_after(std::move(after))
+    {
+    }
+
+    void undo() override;
+    void redo() override;
+
+private:
+    MainWindow *m_window;
+    ProjectDocument m_before;
+    ProjectDocument m_after;
+    bool m_firstRedo = true;
+};
+
+int ruleProfileIndexContainingEntityId(const ProjectDocument &projectDocument, const QString &entityId)
+{
+    if (entityId.isEmpty()) {
+        return -1;
+    }
+
+    for (int index = 0; index < projectDocument.ruleProfiles.size(); ++index) {
+        if (projectDocument.ruleProfiles.at(index).contains(entityId)) {
+            return index;
+        }
+    }
+
+    return -1;
+}
 }
 
 MainWindow::MainWindow(QWidget *parent)
@@ -1729,6 +1910,8 @@ MainWindow::MainWindow(QWidget *parent)
     setupWindow();
     loadDemoGeometry();
     populateToolTable();
+    populateBendTables();
+    updateBendParametersStatusUi();
     populateLayerTree();
     populateEntityProperties();
     updateProjectSummary();
@@ -1737,6 +1920,22 @@ MainWindow::MainWindow(QWidget *parent)
 MainWindow::~MainWindow()
 {
     delete ui;
+}
+
+void MainWindow::closeEvent(QCloseEvent *event)
+{
+    m_appSettings.mainWindowGeometry =
+        QString::fromLatin1(saveGeometry().toBase64(QByteArray::Base64Encoding));
+    m_appSettings.mainWindowState =
+        QString::fromLatin1(saveState().toBase64(QByteArray::Base64Encoding));
+    m_appSettings.layerTreeHeaderState =
+        QString::fromLatin1(ui->layerTree->header()->saveState().toBase64(QByteArray::Base64Encoding));
+    m_appSettings.entityPropertiesHeaderState =
+        QString::fromLatin1(ui->entityPropertiesTree->header()->saveState().toBase64(QByteArray::Base64Encoding));
+    m_appSettings.ruleProfileTreeHeaderState =
+        QString::fromLatin1(ui->bladeLinePropertiesTree->header()->saveState().toBase64(QByteArray::Base64Encoding));
+    saveAppSettings();
+    QMainWindow::closeEvent(event);
 }
 
 void MainWindow::setupWindow()
@@ -1753,6 +1952,14 @@ void MainWindow::setupWindow()
     ui->toolStationTable->verticalHeader()->setVisible(false);
     ui->toolStationTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     ui->toolStationTable->setSelectionMode(QAbstractItemView::SingleSelection);
+    ui->angleBendTableWidget->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+    ui->angleBendTableWidget->verticalHeader()->setVisible(false);
+    ui->angleBendTableWidget->setSelectionBehavior(QAbstractItemView::SelectRows);
+    ui->angleBendTableWidget->setSelectionMode(QAbstractItemView::SingleSelection);
+    ui->arcBendTableWidget->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+    ui->arcBendTableWidget->verticalHeader()->setVisible(false);
+    ui->arcBendTableWidget->setSelectionBehavior(QAbstractItemView::SelectRows);
+    ui->arcBendTableWidget->setSelectionMode(QAbstractItemView::SingleSelection);
 
     ui->operationList->addItem(QStringLiteral("Operation list will be generated from RuleProfile data."));
     ui->logList->addItem(QStringLiteral("Log pane initialized."));
@@ -1760,6 +1967,9 @@ void MainWindow::setupWindow()
     ui->layerTree->setHeaderLabels({QStringLiteral("Layer"), QStringLiteral("State")});
     ui->entityPropertiesTree->setHeaderLabels({QStringLiteral("Property"), QStringLiteral("Value")});
     ui->bladeLinePropertiesTree->setHeaderLabels({QStringLiteral("Property"), QStringLiteral("Value")});
+    ui->bladeLinePropertiesTree->setEditTriggers(QAbstractItemView::DoubleClicked
+                                                 | QAbstractItemView::EditKeyPressed
+                                                 | QAbstractItemView::SelectedClicked);
     ui->simulationEventList->addItem(QStringLiteral("Simulation skeleton waiting for ToolAction data."));
     ui->menuEdit->addAction(m_undoStack->createUndoAction(this, QStringLiteral("Undo")));
     ui->menuEdit->addAction(m_undoStack->createRedoAction(this, QStringLiteral("Redo")));
@@ -1790,6 +2000,44 @@ void MainWindow::setupWindow()
     updateViewColorUi();
     updateFileMenuState();
 
+    ui->menuView->addSeparator();
+    m_dockingMenu = ui->menuView->addMenu(QStringLiteral("Docking"));
+    m_dockingMenu->addAction(ui->layerDock->toggleViewAction());
+    m_dockingMenu->addAction(ui->entityPropertiesDock->toggleViewAction());
+    m_dockingMenu->addAction(ui->bladeLineDock->toggleViewAction());
+    m_dockingMenu->addAction(ui->operationDock->toggleViewAction());
+    m_dockingMenu->addAction(ui->logDock->toggleViewAction());
+    m_dockingMenu->addSeparator();
+    QAction *resetDockLayoutAction = m_dockingMenu->addAction(QStringLiteral("Reset Dock Layout"));
+    connect(resetDockLayoutAction, &QAction::triggered, this, &MainWindow::resetDockLayout);
+
+    m_defaultMainWindowState = saveState();
+
+    if (!m_appSettings.mainWindowGeometry.isEmpty()) {
+        restoreGeometry(QByteArray::fromBase64(m_appSettings.mainWindowGeometry.toLatin1(),
+                                               QByteArray::Base64Encoding));
+    }
+    if (!m_appSettings.mainWindowState.isEmpty()) {
+        restoreState(QByteArray::fromBase64(m_appSettings.mainWindowState.toLatin1(),
+                                            QByteArray::Base64Encoding));
+    }
+    if (!m_appSettings.layerTreeHeaderState.isEmpty()) {
+        ui->layerTree->header()->restoreState(
+            QByteArray::fromBase64(m_appSettings.layerTreeHeaderState.toLatin1(),
+                                   QByteArray::Base64Encoding));
+    }
+    if (!m_appSettings.entityPropertiesHeaderState.isEmpty()) {
+        ui->entityPropertiesTree->header()->restoreState(
+            QByteArray::fromBase64(m_appSettings.entityPropertiesHeaderState.toLatin1(),
+                                   QByteArray::Base64Encoding));
+    }
+    if (!m_appSettings.ruleProfileTreeHeaderState.isEmpty()) {
+        ui->bladeLinePropertiesTree->header()->restoreState(
+            QByteArray::fromBase64(m_appSettings.ruleProfileTreeHeaderState.toLatin1(),
+                                   QByteArray::Base64Encoding));
+    }
+    ui->mainTabWidget->setCurrentWidget(ui->dxfTab);
+
     auto *spaceShortcut = new QShortcut(QKeySequence(Qt::Key_Space), this);
     connect(spaceShortcut, &QShortcut::activated,
             this, &MainWindow::acceptHoveredCandidateChain);
@@ -1808,6 +2056,9 @@ void MainWindow::setupWindow()
     auto *escapeShortcut = new QShortcut(QKeySequence(Qt::Key_Escape), this);
     connect(escapeShortcut, &QShortcut::activated,
             this, &MainWindow::clearUiSelections);
+    auto *deleteShortcut = new QShortcut(QKeySequence(Qt::Key_Delete), this);
+    connect(deleteShortcut, &QShortcut::activated,
+            this, &MainWindow::deleteSelectedEntity);
 
     connect(ui->actionOpenProject, &QAction::triggered, this, &MainWindow::openProjectFile);
     connect(ui->actionSaveProject, &QAction::triggered, this, &MainWindow::saveProjectFile);
@@ -1818,6 +2069,7 @@ void MainWindow::setupWindow()
     connect(ui->actionRemoveLastFromBladeLine, &QAction::triggered, this, &MainWindow::removeLastFromRuleProfile);
     connect(ui->actionClearBladeLine, &QAction::triggered, this, &MainWindow::removeActiveRuleProfile);
     connect(ui->actionCreateBreak, &QAction::triggered, this, &MainWindow::createBreak);
+    connect(ui->actionJoinLinesToIntersection, &QAction::triggered, this, &MainWindow::joinLinesToIntersection);
     connect(ui->actionFitView, &QAction::triggered, this, &MainWindow::fitDxfToView);
     connect(ui->actionCreateFillet, &QAction::triggered, this, &MainWindow::createFillet);
     connect(ui->dxfView, &DxfViewWidget::entityClicked,
@@ -1836,10 +2088,26 @@ void MainWindow::setupWindow()
             this, &MainWindow::handleDocumentEditCommitted);
     connect(ui->bladeLinePropertiesTree, &QTreeWidget::itemClicked,
             this, &MainWindow::handleRuleProfileItemClicked);
+    connect(ui->bladeLinePropertiesTree, &QTreeWidget::itemChanged,
+            this, &MainWindow::handleRuleProfileTreeItemChanged);
     connect(ui->layerTree, &QTreeWidget::itemChanged,
             this, &MainWindow::handleLayerTreeItemChanged);
     connect(ui->toolStationTable, &QTableWidget::cellChanged,
             this, &MainWindow::handleToolStationCellChanged);
+    connect(ui->angleBendTableWidget, &QTableWidget::cellChanged,
+            this, &MainWindow::handleAngleBendTableCellChanged);
+    connect(ui->arcBendTableWidget, &QTableWidget::cellChanged,
+            this, &MainWindow::handleArcBendTableCellChanged);
+    connect(ui->addAngleBendRowButton, &QPushButton::clicked,
+            this, &MainWindow::addAngleBendRow);
+    connect(ui->addArcBendRowButton, &QPushButton::clicked,
+            this, &MainWindow::addArcBendRow);
+    connect(ui->openBendParametersButton, &QPushButton::clicked,
+            this, &MainWindow::openBendParametersFile);
+    connect(ui->saveBendParametersButton, &QPushButton::clicked,
+            this, &MainWindow::saveBendParametersFile);
+    connect(ui->saveBendParametersAsButton, &QPushButton::clicked,
+            this, &MainWindow::saveBendParametersFileAs);
     connect(ui->selectedEntityColorButton, &QPushButton::clicked, this, [this] {
         chooseColor(ui->selectedEntityColorButton, &m_appSettings.selectedEntityColor,
                     QStringLiteral("Choose Entity Selection Color"), QStringLiteral("Entity"));
@@ -1896,9 +2164,9 @@ void MainWindow::setupWindow()
         chooseColor(ui->endFlagColorButton, &m_appSettings.endFlagColor,
                     QStringLiteral("Choose End Flag Color"), QStringLiteral("End Flag"));
     });
-    connect(ui->portColorButton, &QPushButton::clicked, this, [this] {
-        chooseColor(ui->portColorButton, &m_appSettings.portColor,
-                    QStringLiteral("Choose Port Color"), QStringLiteral("Port"));
+    connect(ui->bridgeColorButton, &QPushButton::clicked, this, [this] {
+        chooseColor(ui->bridgeColorButton, &m_appSettings.bridgeColor,
+                    tr("Choose Bridge Color"), tr("Bridge"));
     });
     connect(ui->fillFlagsCheckBox, &QCheckBox::toggled,
             this, &MainWindow::handleFlagFillChanged);
@@ -1907,9 +2175,33 @@ void MainWindow::setupWindow()
     connect(ui->handleScaleSlider, &QSlider::valueChanged,
             this, &MainWindow::handleHandleScaleChanged);
     connect(ui->portMinLengthSpinBox, qOverload<double>(&QDoubleSpinBox::valueChanged),
-            this, [this](double) { handlePortLengthChanged(); });
+            this, [this](double) { handleBridgeLengthChanged(); });
     connect(ui->portMaxLengthSpinBox, qOverload<double>(&QDoubleSpinBox::valueChanged),
-            this, [this](double) { handlePortLengthChanged(); });
+            this, [this](double) { handleBridgeLengthChanged(); });
+}
+
+void MainWindow::resetDockLayout()
+{
+    if (!m_defaultMainWindowState.isEmpty()) {
+        restoreState(m_defaultMainWindowState);
+    }
+
+    ui->layerDock->show();
+    ui->entityPropertiesDock->show();
+    ui->bladeLineDock->show();
+    ui->operationDock->show();
+    ui->logDock->show();
+
+    m_appSettings.mainWindowState =
+        QString::fromLatin1(saveState().toBase64(QByteArray::Base64Encoding));
+    m_appSettings.layerTreeHeaderState =
+        QString::fromLatin1(ui->layerTree->header()->saveState().toBase64(QByteArray::Base64Encoding));
+    m_appSettings.entityPropertiesHeaderState =
+        QString::fromLatin1(ui->entityPropertiesTree->header()->saveState().toBase64(QByteArray::Base64Encoding));
+    m_appSettings.ruleProfileTreeHeaderState =
+        QString::fromLatin1(ui->bladeLinePropertiesTree->header()->saveState().toBase64(QByteArray::Base64Encoding));
+    saveAppSettings();
+    statusBar()->showMessage(QStringLiteral("Dock layout reset"), 3000);
 }
 
 void MainWindow::loadDemoGeometry()
@@ -2048,6 +2340,8 @@ bool MainWindow::saveProjectFilePath(const QString &filePath)
     }
 
     m_projectDocument.projectFilePath = filePath;
+    m_projectDocument.geometrySnapshot = m_geometryModel.dxfDocument;
+    m_projectDocument.hasGeometrySnapshot = !m_geometryModel.dxfDocument.isEmpty();
 
     QString errorMessage;
     if (!JsonProjectStore::save(filePath, m_projectDocument, &errorMessage)) {
@@ -2085,33 +2379,40 @@ void MainWindow::openProjectFilePath(const QString &filePath)
         return;
     }
 
-    if (loadedProject.dxfFilePath.trimmed().isEmpty()) {
+    if (!loadedProject.hasGeometrySnapshot && loadedProject.dxfFilePath.trimmed().isEmpty()) {
         QMessageBox::warning(this,
                              QStringLiteral("Project Load Failed"),
-                             QStringLiteral("Project does not contain a DXF file path."));
+                             QStringLiteral("Project does not contain geometry or a DXF file path."));
         statusBar()->showMessage(QStringLiteral("Project load failed"), 5000);
         return;
     }
 
-    const FoxDxfReader::Result dxfResult = m_dxfReader.loadFile(loadedProject.dxfFilePath);
-    if (!dxfResult.success) {
-        ui->logList->addItem(QStringLiteral("Project DXF load failed: %1").arg(dxfResult.errorMessage));
-        QMessageBox::warning(this, QStringLiteral("Project DXF Load Failed"), dxfResult.errorMessage);
-        statusBar()->showMessage(QStringLiteral("Project DXF load failed"), 5000);
-        return;
-    }
+    DxfDocument document;
+    if (loadedProject.hasGeometrySnapshot) {
+        document = loadedProject.geometrySnapshot;
+    } else {
+        const FoxDxfReader::Result dxfResult = m_dxfReader.loadFile(loadedProject.dxfFilePath);
+        if (!dxfResult.success) {
+            ui->logList->addItem(QStringLiteral("Project DXF load failed: %1").arg(dxfResult.errorMessage));
+            QMessageBox::warning(this, QStringLiteral("Project DXF Load Failed"), dxfResult.errorMessage);
+            statusBar()->showMessage(QStringLiteral("Project DXF load failed"), 5000);
+            return;
+        }
 
-    DxfDocument document = dxfResult.document;
-    const QStringList hiddenLayers = hiddenLayersFromSettings(m_appSettings);
-    if (!hiddenLayers.isEmpty()) {
-        for (LayerDefinition &layer : document.layers) {
-            layer.visible = !hiddenLayers.contains(layer.name);
+        document = dxfResult.document;
+        const QStringList hiddenLayers = hiddenLayersFromSettings(m_appSettings);
+        if (!hiddenLayers.isEmpty()) {
+            for (LayerDefinition &layer : document.layers) {
+                layer.visible = !hiddenLayers.contains(layer.name);
+            }
         }
     }
 
     applyGeometryDocument(document, true);
     m_projectDocument = loadedProject;
     m_projectDocument.projectFilePath = filePath;
+    m_projectDocument.geometrySnapshot = m_geometryModel.dxfDocument;
+    m_projectDocument.hasGeometrySnapshot = !m_geometryModel.dxfDocument.isEmpty();
     updateRuleProfileViewState();
     populateLayerTree();
     populateEntityProperties();
@@ -2167,18 +2468,64 @@ void MainWindow::updateRuleProfileViewState()
     QList<int> allIndexes = resolveAllRuleProfileIndexes(m_geometryModel.dxfDocument, m_projectDocument.ruleProfiles);
     QList<int> activeIndexes;
     QList<int> candidateIndexes;
-    QList<int> highlightedPortIndexes;
+    QList<int> modifiedSegmentIndexes;
+    QList<int> highlightedBridgeIndexes;
     PendingRuleProfileState pendingState;
     m_candidateChains.clear();
+
+    auto segmentOptionsModified = [](const RuleProfileSegmentOptions &options) {
+        return !qFuzzyCompare(options.angleCorrectionDeg + 1.0, 1.0)
+               || !qFuzzyCompare(options.lengthCorrectionMm + 1.0, 1.0)
+               || options.openMode != QStringLiteral("Normal");
+    };
+
+    for (int pathIndex = 0; pathIndex < m_projectDocument.ruleProfiles.size(); ++pathIndex) {
+        const QStringList &ruleProfile = m_projectDocument.ruleProfiles.at(pathIndex);
+        const QList<int> resolvedIndexes = resolveRuleProfileIndexes(m_geometryModel.dxfDocument, ruleProfile);
+        int familyIndex = -1;
+        int previousResolvedIndex = -1;
+        QList<int> currentFamilyEntityIndexes;
+
+        auto flushModifiedFamily = [&]() {
+            if (familyIndex < 0 || currentFamilyEntityIndexes.isEmpty()
+                || pathIndex < 0 || pathIndex >= m_projectDocument.ruleProfileSegmentOptions.size()
+                || familyIndex >= m_projectDocument.ruleProfileSegmentOptions.at(pathIndex).size()) {
+                currentFamilyEntityIndexes.clear();
+                return;
+            }
+
+            if (segmentOptionsModified(m_projectDocument.ruleProfileSegmentOptions.at(pathIndex).at(familyIndex))) {
+                modifiedSegmentIndexes = mergeUniqueIndexes(modifiedSegmentIndexes, currentFamilyEntityIndexes);
+            }
+            currentFamilyEntityIndexes.clear();
+        };
+
+        for (int resolvedIndex : resolvedIndexes) {
+            const bool sameFamilyAsPrevious =
+                !currentFamilyEntityIndexes.isEmpty()
+                && previousResolvedIndex >= 0
+                && entitiesShareSelectableFamily(m_geometryModel.dxfDocument,
+                                                 previousResolvedIndex,
+                                                 resolvedIndex,
+                                                 qMax(0.05, m_appSettings.defaultToleranceMm));
+            if (!sameFamilyAsPrevious) {
+                flushModifiedFamily();
+                ++familyIndex;
+            }
+            currentFamilyEntityIndexes.append(resolvedIndex);
+            previousResolvedIndex = resolvedIndex;
+        }
+        flushModifiedFamily();
+    }
 
     if (m_toolMode == ToolMode::RuleProfileBuild) {
         activeIndexes = resolveRuleProfileIndexes(m_geometryModel.dxfDocument, m_pendingRuleProfileEntityIds);
         pendingState = pendingRuleProfileState(m_geometryModel.dxfDocument,
                                              m_pendingRuleProfileEntityIds,
-                                             m_geometryModel.detectedPorts);
+                                             m_geometryModel.detectedBridges);
         m_candidateChains = candidateRuleProfileChains(m_geometryModel.dxfDocument,
                                                      m_pendingRuleProfileEntityIds,
-                                                     m_geometryModel.detectedPorts,
+                                                     m_geometryModel.detectedBridges,
                                                      qMax(0.05, m_appSettings.defaultToleranceMm));
         for (const QList<int> &chain : std::as_const(m_candidateChains)) {
             candidateIndexes = mergeUniqueIndexes(candidateIndexes, chain);
@@ -2186,11 +2533,11 @@ void MainWindow::updateRuleProfileViewState()
                                                                       m_pendingRuleProfileEntityIds);
             int previousIndex = pendingIndexes.isEmpty() ? -1 : pendingIndexes.last();
             for (int entityIndex : chain) {
-                const int portIndex = findPortIndexForEntities(m_geometryModel.detectedPorts,
-                                                               previousIndex,
-                                                               entityIndex);
-                if (portIndex >= 0 && !highlightedPortIndexes.contains(portIndex)) {
-                    highlightedPortIndexes.append(portIndex);
+                const int bridgeIndex = findBridgeIndexForEntities(m_geometryModel.detectedBridges,
+                                                                   previousIndex,
+                                                                   entityIndex);
+                if (bridgeIndex >= 0 && !highlightedBridgeIndexes.contains(bridgeIndex)) {
+                    highlightedBridgeIndexes.append(bridgeIndex);
                 }
                 previousIndex = entityIndex;
             }
@@ -2204,20 +2551,21 @@ void MainWindow::updateRuleProfileViewState()
         if (ruleProfile != nullptr) {
             pendingState = pendingRuleProfileState(m_geometryModel.dxfDocument,
                                                    *ruleProfile,
-                                                   m_geometryModel.detectedPorts);
+                                                   m_geometryModel.detectedBridges);
         }
     }
 
     ui->dxfView->setRuleProfileEntityIndexes(allIndexes);
     ui->dxfView->setActiveRuleProfileEntityIndexes(activeIndexes);
     ui->dxfView->setCandidateEntityIndexes(candidateIndexes);
-    ui->dxfView->setHighlightedPortIndexes(highlightedPortIndexes);
+    ui->dxfView->setModifiedSegmentEntityIndexes(modifiedSegmentIndexes);
+    ui->dxfView->setHighlightedBridgeIndexes(highlightedBridgeIndexes);
     if (m_toolMode != ToolMode::RuleProfileBuild) {
         ui->dxfView->setHoveredCandidateEntityIndexes({});
-        ui->dxfView->setHoveredPortIndexes({});
+        ui->dxfView->setHoveredBridgeIndexes({});
     } else if (!candidateIndexes.contains(m_hoveredEntityIndex)) {
         ui->dxfView->setHoveredCandidateEntityIndexes({});
-        ui->dxfView->setHoveredPortIndexes({});
+        ui->dxfView->setHoveredBridgeIndexes({});
     }
     ui->dxfView->setRuleProfileGuide(pendingState.startPoint,
                                      pendingState.nextPoint,
@@ -2292,6 +2640,8 @@ void MainWindow::buildRuleProfile()
     }
 
     m_projectDocument.ruleProfiles.append(m_pendingRuleProfileEntityIds);
+    m_projectDocument.ruleProfileOptions.append(RuleProfileOptions());
+    m_projectDocument.ruleProfileSegmentOptions.append(QList<RuleProfileSegmentOptions>());
     m_projectDocument.activeRuleProfileIndex = m_projectDocument.ruleProfiles.size() - 1;
     const int ruleProfileNumber = m_projectDocument.activeRuleProfileIndex + 1;
     const int segmentCount = m_pendingRuleProfileEntityIds.size();
@@ -2315,27 +2665,85 @@ void MainWindow::removeActiveRuleProfile()
         return;
     }
 
-    const int removedIndex = m_projectDocument.activeRuleProfileIndex;
-    m_projectDocument.ruleProfiles.removeAt(removedIndex);
-    if (m_projectDocument.ruleProfiles.isEmpty()) {
-        m_projectDocument.activeRuleProfileIndex = -1;
-    } else if (removedIndex >= m_projectDocument.ruleProfiles.size()) {
-        m_projectDocument.activeRuleProfileIndex = m_projectDocument.ruleProfiles.size() - 1;
+    const ProjectDocument beforeProject = m_projectDocument;
+    ProjectDocument afterProject = m_projectDocument;
+    const int removedIndex = afterProject.activeRuleProfileIndex;
+    afterProject.ruleProfiles.removeAt(removedIndex);
+    if (removedIndex >= 0 && removedIndex < afterProject.ruleProfileOptions.size()) {
+        afterProject.ruleProfileOptions.removeAt(removedIndex);
+    }
+    if (removedIndex >= 0 && removedIndex < afterProject.ruleProfileSegmentOptions.size()) {
+        afterProject.ruleProfileSegmentOptions.removeAt(removedIndex);
+    }
+    if (afterProject.ruleProfiles.isEmpty()) {
+        afterProject.activeRuleProfileIndex = -1;
+    } else if (removedIndex >= afterProject.ruleProfiles.size()) {
+        afterProject.activeRuleProfileIndex = afterProject.ruleProfiles.size() - 1;
     } else {
-        m_projectDocument.activeRuleProfileIndex = removedIndex;
+        afterProject.activeRuleProfileIndex = removedIndex;
     }
 
-    ui->dxfView->setRuleProfileEntityIndexes(
-        resolveAllRuleProfileIndexes(m_geometryModel.dxfDocument, m_projectDocument.ruleProfiles));
-    const QStringList *activeRuleProfilePath = activeRuleProfile(&m_projectDocument);
-    ui->dxfView->setActiveRuleProfileEntityIndexes(
-        activeRuleProfilePath == nullptr ? QList<int>{}
-                                       : resolveRuleProfileIndexes(m_geometryModel.dxfDocument,
-                                                                 *activeRuleProfilePath));
-    populateEntityProperties();
-    updateProjectSummary();
+    applyUndoRedoProjectDocument(afterProject);
+    m_undoStack->push(new ProjectDocumentEditCommand(this,
+                                                     beforeProject,
+                                                     afterProject,
+                                                     QStringLiteral("Remove RuleProfile")));
     ui->logList->addItem(QStringLiteral("Removed RuleProfile %1").arg(removedIndex + 1));
     statusBar()->showMessage(QStringLiteral("RuleProfile removed"), 3000);
+}
+
+void MainWindow::deleteSelectedEntity()
+{
+    QTreeWidgetItem *currentRuleProfileItem = ui->bladeLinePropertiesTree->currentItem();
+    if (currentRuleProfileItem != nullptr) {
+        const int pathIndex = currentRuleProfileItem->data(0, BladeTreePathIndexRole).toInt();
+        if (pathIndex >= 0 && pathIndex < m_projectDocument.ruleProfiles.size()) {
+            m_projectDocument.activeRuleProfileIndex = pathIndex;
+            removeActiveRuleProfile();
+            return;
+        }
+    }
+
+    if (m_selectedEntityIndex < 0 || m_selectedEntityIndex >= m_geometryModel.dxfDocument.entities.size()) {
+        statusBar()->showMessage(QStringLiteral("No entity selected"), 3000);
+        return;
+    }
+
+    const DxfEntity &selectedEntity = m_geometryModel.dxfDocument.entities.at(m_selectedEntityIndex);
+
+    if (m_pendingRuleProfileEntityIds.contains(selectedEntity.id)) {
+        const int pendingCount = m_pendingRuleProfileEntityIds.size();
+        m_pendingRuleProfileEntityIds.clear();
+        if (m_toolMode == ToolMode::RuleProfileBuild) {
+            m_toolMode = ToolMode::None;
+        }
+        updateRuleProfileViewState();
+        populateEntityProperties();
+        updateProjectSummary();
+        updateToolStatus();
+        ui->logList->addItem(QStringLiteral("Removed pending RuleProfile with %1 entities")
+                                 .arg(pendingCount));
+        statusBar()->showMessage(QStringLiteral("Pending RuleProfile removed"), 3000);
+        return;
+    }
+
+    const int owningRuleProfileIndex = ruleProfileIndexContainingEntityId(m_projectDocument, selectedEntity.id);
+    if (owningRuleProfileIndex >= 0) {
+        m_projectDocument.activeRuleProfileIndex = owningRuleProfileIndex;
+        removeActiveRuleProfile();
+        return;
+    }
+
+    const DxfDocument beforeDocument = m_geometryModel.dxfDocument;
+    DxfDocument afterDocument = beforeDocument;
+    afterDocument.entities.removeAt(m_selectedEntityIndex);
+    applyGeometryDocument(afterDocument, false);
+    m_undoStack->push(new GeometryEditCommand(this,
+                                              beforeDocument,
+                                              afterDocument,
+                                              QStringLiteral("Delete DXF entity")));
+    ui->logList->addItem(QStringLiteral("Deleted entity %1").arg(selectedEntity.id));
+    statusBar()->showMessage(QStringLiteral("Entity deleted"), 3000);
 }
 
 void MainWindow::createBreak()
@@ -2373,6 +2781,18 @@ void MainWindow::createFillet()
     updateToolStatus();
 }
 
+void MainWindow::joinLinesToIntersection()
+{
+    cancelActiveTool();
+    m_pendingFilletRadius = 0.0;
+    m_pendingBreakEntity = -1;
+    m_pendingFilletFirstEntity = -1;
+    m_toolMode = ToolMode::FilletPickFirst;
+    ui->dxfView->setArmedEntityIndex(-1);
+    ui->dxfView->setBreakPreviewEnabled(false);
+    updateToolStatus();
+}
+
 void MainWindow::handleEntityClicked(int entityIndex, const QPointF &scenePos)
 {
     if (entityIndex < 0 || entityIndex >= m_geometryModel.dxfDocument.entities.size()) {
@@ -2397,7 +2817,7 @@ void MainWindow::handleEntityClicked(int entityIndex, const QPointF &scenePos)
                 const QList<DirectedPendingEntityInfo> directedInfos =
                     directedPendingEntityInfos(m_geometryModel.dxfDocument,
                                                m_pendingRuleProfileEntityIds,
-                                               m_geometryModel.detectedPorts);
+                                               m_geometryModel.detectedBridges);
                 if (existingIndex >= directedInfos.size()) {
                     statusBar()->showMessage(QStringLiteral("Could not resolve pending RuleProfile direction"), 3000);
                     return;
@@ -2530,9 +2950,16 @@ void MainWindow::handleEntityClicked(int entityIndex, const QPointF &scenePos)
         m_undoStack->push(new GeometryEditCommand(this,
                                                   m_geometryModel.dxfDocument,
                                                   result.document,
-                                                  QStringLiteral("Create fillet")));
+                                                  qFuzzyIsNull(m_pendingFilletRadius)
+                                                      ? QStringLiteral("Join lines to intersection")
+                                                      : QStringLiteral("Create fillet")));
         applyGeometryDocument(result.document, false);
-        ui->logList->addItem(QStringLiteral("Created fillet with radius %1 mm").arg(QString::number(m_pendingFilletRadius, 'f', 3)));
+        if (qFuzzyIsNull(m_pendingFilletRadius)) {
+            ui->logList->addItem(QStringLiteral("Joined selected lines to intersection"));
+        } else {
+            ui->logList->addItem(QStringLiteral("Created fillet with radius %1 mm")
+                                     .arg(QString::number(m_pendingFilletRadius, 'f', 3)));
+        }
         cancelActiveTool();
     }
 }
@@ -2630,9 +3057,13 @@ void MainWindow::applyLoadedDocument(const DxfDocument &document,
 {
     m_projectDocument.projectFilePath.clear();
     m_projectDocument.ruleProfiles.clear();
+    m_projectDocument.ruleProfileOptions.clear();
+    m_projectDocument.ruleProfileSegmentOptions.clear();
     m_projectDocument.activeRuleProfileIndex = 0;
     applyGeometryDocument(document, true);
     m_projectDocument.dxfFilePath = sourcePath;
+    m_projectDocument.geometrySnapshot = m_geometryModel.dxfDocument;
+    m_projectDocument.hasGeometrySnapshot = !m_geometryModel.dxfDocument.isEmpty();
     ui->logList->addItem(logMessage);
     statusBar()->showMessage(logMessage, 5000);
 }
@@ -2640,13 +3071,15 @@ void MainWindow::applyLoadedDocument(const DxfDocument &document,
 void MainWindow::applyGeometryDocument(const DxfDocument &document, bool fitView)
 {
     m_geometryModel.dxfDocument = document;
-    recomputeDetectedPorts();
+    m_projectDocument.geometrySnapshot = m_geometryModel.dxfDocument;
+    m_projectDocument.hasGeometrySnapshot = !m_geometryModel.dxfDocument.isEmpty();
+    recomputeDetectedBridges();
     if (!m_isApplyingUndoRedo) {
         ui->dxfView->setDocument(m_geometryModel.dxfDocument, fitView);
     } else {
         ui->dxfView->setDocument(m_geometryModel.dxfDocument, false);
     }
-    ui->dxfView->setDetectedPorts(m_geometryModel.detectedPorts);
+    ui->dxfView->setDetectedBridges(m_geometryModel.detectedBridges);
     updateRuleProfileViewState();
     populateLayerTree();
     populateEntityProperties();
@@ -2671,7 +3104,7 @@ void MainWindow::handleEntityHovered(int entityIndex)
 {
     m_hoveredEntityIndex = entityIndex;
     QList<int> hoveredChain;
-    QList<int> hoveredPortIndexes;
+    QList<int> hoveredBridgeIndexes;
     if (m_toolMode == ToolMode::RuleProfileBuild && entityIndex >= 0) {
         for (const QList<int> &chain : std::as_const(m_candidateChains)) {
             if (!chain.contains(entityIndex)) {
@@ -2683,11 +3116,11 @@ void MainWindow::handleEntityHovered(int entityIndex)
                                                                       m_pendingRuleProfileEntityIds);
             int previousIndex = pendingIndexes.isEmpty() ? -1 : pendingIndexes.last();
             for (int chainEntityIndex : chain) {
-                const int portIndex = findPortIndexForEntities(m_geometryModel.detectedPorts,
-                                                               previousIndex,
-                                                               chainEntityIndex);
-                if (portIndex >= 0 && !hoveredPortIndexes.contains(portIndex)) {
-                    hoveredPortIndexes.append(portIndex);
+                const int bridgeIndex = findBridgeIndexForEntities(m_geometryModel.detectedBridges,
+                                                                   previousIndex,
+                                                                   chainEntityIndex);
+                if (bridgeIndex >= 0 && !hoveredBridgeIndexes.contains(bridgeIndex)) {
+                    hoveredBridgeIndexes.append(bridgeIndex);
                 }
                 previousIndex = chainEntityIndex;
             }
@@ -2696,7 +3129,7 @@ void MainWindow::handleEntityHovered(int entityIndex)
     }
 
     ui->dxfView->setHoveredCandidateEntityIndexes(hoveredChain);
-    ui->dxfView->setHoveredPortIndexes(hoveredPortIndexes);
+    ui->dxfView->setHoveredBridgeIndexes(hoveredBridgeIndexes);
     updatePendingTrimPreview();
     updateStatusBarDetails();
 }
@@ -2708,9 +3141,34 @@ void MainWindow::handlePointerMoved(const QPointF &scenePos)
     updateStatusBarDetails();
 }
 
-void MainWindow::handleRuleProfileItemClicked(QTreeWidgetItem *item, int /*column*/)
+void MainWindow::handleRuleProfileItemClicked(QTreeWidgetItem *item, int column)
 {
     if (item == nullptr) {
+        return;
+    }
+
+    const QVariant optionKeyData = item->data(0, BladeTreeOptionKeyRole);
+    if (optionKeyData.isValid()) {
+        QTreeWidgetItem *pathItem = item->parent();
+        while (pathItem != nullptr && pathItem->data(0, BladeTreeItemTypeRole).toInt() != BladeTreeItemTypePath) {
+            pathItem = pathItem->parent();
+        }
+        if (pathItem != nullptr) {
+            const int pathIndex = pathItem->data(0, BladeTreePathIndexRole).toInt();
+            if (pathIndex >= 0 && pathIndex < m_projectDocument.ruleProfiles.size()
+                && m_projectDocument.activeRuleProfileIndex != pathIndex) {
+                m_projectDocument.activeRuleProfileIndex = pathIndex;
+                updateRuleProfileViewState();
+                updateProjectSummary();
+            }
+        }
+
+        if (column == 1
+            && optionKeyData.toString() != QLatin1String(RuleProfileOptionMirrorKey)
+            && optionKeyData.toString() != QLatin1String(RuleProfileOptionStartLipKey)
+            && optionKeyData.toString() != QLatin1String(RuleProfileOptionEndLipKey)) {
+            ui->bladeLinePropertiesTree->editItem(item, 1);
+        }
         return;
     }
 
@@ -2730,7 +3188,7 @@ void MainWindow::handleRuleProfileItemClicked(QTreeWidgetItem *item, int /*colum
             updateRuleProfileViewState();
             ui->dxfView->selectEntityIndex(-1);
             ui->dxfView->setTreeSelectionEntityIndexes({});
-            ui->dxfView->setTreeSelectionPortIndexes({});
+            ui->dxfView->setTreeSelectionBridgeIndexes({});
             populateEntityProperties();
             updateProjectSummary();
             ui->logList->addItem(QStringLiteral("Activated RuleProfile %1").arg(pathIndex + 1));
@@ -2742,22 +3200,22 @@ void MainWindow::handleRuleProfileItemClicked(QTreeWidgetItem *item, int /*colum
     if (itemType == BladeTreeItemTypeFamily) {
         const QList<int> familyEntityIndexes = stringListToIntList(
             typedItem->data(0, BladeTreeEntityIdsRole).toStringList());
-        const QList<int> familyPortIndexes = stringListToIntList(
-            typedItem->data(0, BladeTreePortIndexesRole).toStringList());
+        const QList<int> familyBridgeIndexes = stringListToIntList(
+            typedItem->data(0, BladeTreeBridgeIndexesRole).toStringList());
         ui->dxfView->selectEntityIndex(-1);
         ui->dxfView->setTreeSelectionEntityIndexes(familyEntityIndexes);
-        ui->dxfView->setTreeSelectionPortIndexes(familyPortIndexes);
+        ui->dxfView->setTreeSelectionBridgeIndexes(familyBridgeIndexes);
         statusBar()->showMessage(QStringLiteral("Selected %1")
                                      .arg(typedItem->text(0)),
                                  3000);
         return;
     }
 
-    if (itemType == BladeTreeItemTypePort) {
-        const int portIndex = typedItem->data(0, BladeTreePortIndexRole).toInt();
+    if (itemType == BladeTreeItemTypeBridge) {
+        const int bridgeIndex = typedItem->data(0, BladeTreeBridgeIndexRole).toInt();
         ui->dxfView->selectEntityIndex(-1);
         ui->dxfView->setTreeSelectionEntityIndexes({});
-        ui->dxfView->setTreeSelectionPortIndexes(portIndex >= 0 ? QList<int>{portIndex} : QList<int>{});
+        ui->dxfView->setTreeSelectionBridgeIndexes(bridgeIndex >= 0 ? QList<int>{bridgeIndex} : QList<int>{});
         statusBar()->showMessage(QStringLiteral("Selected %1").arg(typedItem->text(0)), 3000);
         return;
     }
@@ -2775,12 +3233,121 @@ void MainWindow::handleRuleProfileItemClicked(QTreeWidgetItem *item, int /*colum
         if (entityIndex >= 0 && entityIndex < m_geometryModel.dxfDocument.entities.size()) {
             ui->dxfView->selectEntityIndex(entityIndex);
             ui->dxfView->setTreeSelectionEntityIndexes({});
-            ui->dxfView->setTreeSelectionPortIndexes({});
+            ui->dxfView->setTreeSelectionBridgeIndexes({});
             statusBar()->showMessage(QStringLiteral("RuleProfile %1, segment %2 selected")
                                          .arg(pathIndex + 1)
                                          .arg(typedItem->text(0)),
                                      3000);
         }
+    }
+}
+
+void MainWindow::handleRuleProfileTreeItemChanged(QTreeWidgetItem *item, int column)
+{
+    if (m_isPopulatingRuleProfileTree || item == nullptr || column != 1) {
+        return;
+    }
+
+    const QVariant optionKeyData = item->data(0, BladeTreeOptionKeyRole);
+    if (!optionKeyData.isValid()) {
+        return;
+    }
+
+    QTreeWidgetItem *typedItem = item;
+    while (typedItem != nullptr && !typedItem->data(0, BladeTreeItemTypeRole).isValid()) {
+        typedItem = typedItem->parent();
+    }
+    if (typedItem == nullptr || typedItem->data(0, BladeTreeItemTypeRole).toInt() != BladeTreeItemTypePath) {
+        return;
+    }
+
+    const int pathIndex = typedItem->data(0, BladeTreePathIndexRole).toInt();
+    if (pathIndex < 0 || pathIndex >= m_projectDocument.ruleProfileOptions.size()) {
+        return;
+    }
+
+    RuleProfileOptions &options = m_projectDocument.ruleProfileOptions[pathIndex];
+    const QString optionKey = optionKeyData.toString();
+    bool updated = false;
+    bool valid = true;
+
+    if (optionKey == QLatin1String(RuleProfileOptionCountKey)) {
+        const QString text = item->text(1).trimmed();
+        bool ok = false;
+        const int value = text.toInt(&ok);
+        valid = ok && value >= 1;
+        if (valid) {
+            options.count = value;
+            item->setText(1, QString::number(options.count));
+            updated = true;
+        }
+    } else if (optionKey == QLatin1String(RuleProfileOptionMirrorKey)) {
+        options.mirror = item->checkState(1) == Qt::Checked;
+        updated = true;
+    } else if (optionKey == QLatin1String(RuleProfileOptionStartCorrectionKey)) {
+        const QString text = item->text(1).trimmed();
+        bool ok = false;
+        const double value = text.toDouble(&ok);
+        valid = ok;
+        if (valid) {
+            options.startCorrectionMm = value;
+            item->setText(1, QString::number(options.startCorrectionMm, 'f', 2));
+            updated = true;
+        }
+    } else if (optionKey == QLatin1String(RuleProfileOptionEndCorrectionKey)) {
+        const QString text = item->text(1).trimmed();
+        bool ok = false;
+        const double value = text.toDouble(&ok);
+        valid = ok;
+        if (valid) {
+            options.endCorrectionMm = value;
+            item->setText(1, QString::number(options.endCorrectionMm, 'f', 2));
+            updated = true;
+        }
+    } else if (optionKey == QLatin1String(RuleProfileOptionStartLipKey)) {
+        options.startLip = item->checkState(1) == Qt::Checked;
+        updated = true;
+    } else if (optionKey == QLatin1String(RuleProfileOptionEndLipKey)) {
+        options.endLip = item->checkState(1) == Qt::Checked;
+        updated = true;
+    }
+
+    if (!valid) {
+        m_isPopulatingRuleProfileTree = true;
+        const RuleProfileOptions current = options;
+        if (optionKey == QLatin1String(RuleProfileOptionCountKey)) {
+            item->setText(1, QString::number(current.count));
+        } else if (optionKey == QLatin1String(RuleProfileOptionStartCorrectionKey)) {
+            item->setText(1, QString::number(current.startCorrectionMm, 'f', 2));
+        } else if (optionKey == QLatin1String(RuleProfileOptionEndCorrectionKey)) {
+            item->setText(1, QString::number(current.endCorrectionMm, 'f', 2));
+        }
+        m_isPopulatingRuleProfileTree = false;
+        statusBar()->showMessage(QStringLiteral("Invalid RuleProfile option value"), 3000);
+        return;
+    }
+
+    if (updated) {
+        const RuleProfileOptions defaultOptions;
+        bool highlight = false;
+        if (optionKey == QLatin1String(RuleProfileOptionCountKey)) {
+            highlight = options.count != defaultOptions.count;
+        } else if (optionKey == QLatin1String(RuleProfileOptionMirrorKey)) {
+            highlight = options.mirror != defaultOptions.mirror;
+        } else if (optionKey == QLatin1String(RuleProfileOptionStartCorrectionKey)) {
+            highlight = !qFuzzyCompare(options.startCorrectionMm + 1.0, defaultOptions.startCorrectionMm + 1.0);
+        } else if (optionKey == QLatin1String(RuleProfileOptionEndCorrectionKey)) {
+            highlight = !qFuzzyCompare(options.endCorrectionMm + 1.0, defaultOptions.endCorrectionMm + 1.0);
+        } else if (optionKey == QLatin1String(RuleProfileOptionStartLipKey)) {
+            highlight = options.startLip != defaultOptions.startLip;
+        } else if (optionKey == QLatin1String(RuleProfileOptionEndLipKey)) {
+            highlight = options.endLip != defaultOptions.endLip;
+        }
+        const QBrush changedBrush(highlight ? QColor(255, 247, 210) : Qt::transparent);
+        item->setBackground(0, changedBrush);
+        item->setBackground(1, changedBrush);
+        updateProjectSummary();
+        statusBar()->showMessage(QStringLiteral("RuleProfile option updated"), 2000);
     }
 }
 
@@ -2793,9 +3360,9 @@ void MainWindow::clearUiSelections()
     ui->bladeLinePropertiesTree->clearSelection();
     ui->dxfView->selectEntityIndex(-1);
     ui->dxfView->setTreeSelectionEntityIndexes({});
-    ui->dxfView->setTreeSelectionPortIndexes({});
+    ui->dxfView->setTreeSelectionBridgeIndexes({});
     ui->dxfView->setHoveredCandidateEntityIndexes({});
-    ui->dxfView->setHoveredPortIndexes({});
+    ui->dxfView->setHoveredBridgeIndexes({});
     ui->dxfView->setPendingTrimPreview({}, false);
     ui->dxfView->setArmedEntityIndex(-1);
     m_selectedEntityIndex = -1;
@@ -2909,19 +3476,159 @@ void MainWindow::handleToolStationCellChanged(int row, int column)
     statusBar()->showMessage(QStringLiteral("Tool settings saved"), 2000);
 }
 
+void MainWindow::handleAngleBendTableCellChanged(int row, int column)
+{
+    if (m_isPopulatingBendTables) {
+        return;
+    }
+
+    if (row < 0 || row >= m_appSettings.angleBendTable.size()
+        || column < 0 || column >= ui->angleBendTableWidget->columnCount()) {
+        return;
+    }
+
+    QTableWidgetItem *item = ui->angleBendTableWidget->item(row, column);
+    if (item == nullptr) {
+        return;
+    }
+
+    AngleBendTableRow &tableRow = m_appSettings.angleBendTable[row];
+    bool ok = false;
+    const double value = item->text().toDouble(&ok);
+    if (!ok) {
+        populateBendTables();
+        statusBar()->showMessage(QStringLiteral("Invalid angle bend table value"), 3000);
+        return;
+    }
+
+    switch (column) {
+    case 0:
+        tableRow.angleDeg = value;
+        sortAngleBendTable(&m_appSettings.angleBendTable);
+        break;
+    case 1:
+        tableRow.left = value;
+        break;
+    case 2:
+        tableRow.right = value;
+        break;
+    case 3:
+        tableRow.startCorrection = value;
+        break;
+    case 4:
+        tableRow.endCorrection = value;
+        break;
+    default:
+        return;
+    }
+
+    saveAppSettings();
+    populateBendTables();
+    statusBar()->showMessage(QStringLiteral("Angle bend table saved"), 2000);
+}
+
+void MainWindow::handleArcBendTableCellChanged(int row, int column)
+{
+    if (m_isPopulatingBendTables) {
+        return;
+    }
+
+    if (row < 0 || row >= m_appSettings.arcBendTable.size()
+        || column < 0 || column >= ui->arcBendTableWidget->columnCount() - 1) {
+        return;
+    }
+
+    QTableWidgetItem *item = ui->arcBendTableWidget->item(row, column);
+    if (item == nullptr) {
+        return;
+    }
+
+    ArcBendTableRow &tableRow = m_appSettings.arcBendTable[row];
+    bool ok = false;
+
+    if (column == 1) {
+        const int hits = item->text().toInt(&ok);
+        if (!ok || hits <= 0) {
+            populateBendTables();
+            statusBar()->showMessage(QStringLiteral("Invalid hits value"), 3000);
+            return;
+        }
+        tableRow.hits = hits;
+    } else {
+        const double value = item->text().toDouble(&ok);
+        if (!ok) {
+            populateBendTables();
+            statusBar()->showMessage(QStringLiteral("Invalid arc bend table value"), 3000);
+            return;
+        }
+
+        switch (column) {
+        case 0:
+            tableRow.radiusMm = value;
+            sortArcBendTable(&m_appSettings.arcBendTable);
+            break;
+        case 2:
+            tableRow.right90 = value;
+            break;
+        case 3:
+            tableRow.right45 = value;
+            break;
+        case 4:
+            tableRow.left90 = value;
+            break;
+        case 5:
+            tableRow.left45 = value;
+            break;
+        case 6:
+            tableRow.startCorrection = value;
+            break;
+        case 7:
+            tableRow.endCorrection = value;
+            break;
+        case 8:
+            tableRow.bridgeReduction = value;
+            break;
+        default:
+            return;
+        }
+    }
+
+    saveAppSettings();
+    populateBendTables();
+    statusBar()->showMessage(QStringLiteral("Arc bend table saved"), 2000);
+}
+
 void MainWindow::loadAppSettings()
 {
     AppSettings loadedSettings;
     QString errorMessage;
-    if (!JsonSettingsStore::load(settingsFilePath(), &loadedSettings, &errorMessage)) {
-        return;
+    const bool settingsLoaded = JsonSettingsStore::load(settingsFilePath(), &loadedSettings, &errorMessage);
+    if (!settingsLoaded) {
+        JsonSettingsStore::save(settingsFilePath(), m_appSettings, nullptr);
+        loadedSettings = m_appSettings;
     }
 
     m_appSettings = loadedSettings;
+
+    m_currentBendParametersFilePath =
+        m_appSettings.lastBendParametersFilePath.trimmed().isEmpty()
+            ? bendParametersFilePath()
+            : m_appSettings.lastBendParametersFilePath.trimmed();
+
+    AppSettings bendSettings = m_appSettings;
+    QString bendErrorMessage;
+    if (!JsonBendParametersStore::load(m_currentBendParametersFilePath, &bendSettings, &bendErrorMessage)) {
+        JsonBendParametersStore::save(m_currentBendParametersFilePath, m_appSettings, nullptr);
+    } else {
+        m_appSettings.angleBendTable = bendSettings.angleBendTable;
+        m_appSettings.arcBendTable = bendSettings.arcBendTable;
+    }
 }
 
 bool MainWindow::saveAppSettings(bool logSuccess)
 {
+    m_appSettings.lastBendParametersFilePath = m_currentBendParametersFilePath;
+
     QString errorMessage;
     if (!JsonSettingsStore::save(settingsFilePath(), m_appSettings, &errorMessage)) {
         if (ui != nullptr && ui->logList != nullptr) {
@@ -2933,10 +3640,286 @@ bool MainWindow::saveAppSettings(bool logSuccess)
         return false;
     }
 
+    QString bendErrorMessage;
+    if (!m_currentBendParametersFilePath.isEmpty()
+        && !JsonBendParametersStore::save(m_currentBendParametersFilePath, m_appSettings, &bendErrorMessage)) {
+        if (ui != nullptr && ui->logList != nullptr) {
+            ui->logList->addItem(QStringLiteral("Bend parameters save failed: %1").arg(bendErrorMessage));
+        }
+        if (statusBar() != nullptr) {
+            statusBar()->showMessage(QStringLiteral("Bend parameters save failed"), 5000);
+        }
+        return false;
+    }
+
     if (logSuccess && ui != nullptr && ui->logList != nullptr) {
         ui->logList->addItem(QStringLiteral("Settings saved: %1").arg(settingsFilePath()));
+        if (!m_currentBendParametersFilePath.isEmpty()) {
+            ui->logList->addItem(QStringLiteral("Bend parameters saved: %1").arg(m_currentBendParametersFilePath));
+        }
     }
+    updateBendParametersStatusUi();
     return true;
+}
+
+bool MainWindow::loadBendParametersFilePath(const QString &filePath)
+{
+    if (filePath.trimmed().isEmpty()) {
+        return false;
+    }
+
+    AppSettings bendSettings = m_appSettings;
+    QString errorMessage;
+    if (!JsonBendParametersStore::load(filePath, &bendSettings, &errorMessage)) {
+        ui->logList->addItem(QStringLiteral("Bend parameters load failed: %1").arg(errorMessage));
+        QMessageBox::warning(this, QStringLiteral("Bend Parameters Load Failed"), errorMessage);
+        statusBar()->showMessage(QStringLiteral("Bend parameters load failed"), 5000);
+        return false;
+    }
+
+    m_appSettings.angleBendTable = bendSettings.angleBendTable;
+    m_appSettings.arcBendTable = bendSettings.arcBendTable;
+    m_currentBendParametersFilePath = filePath;
+    updateBendParametersStatusUi();
+    populateBendTables();
+    saveAppSettings();
+    ui->logList->addItem(QStringLiteral("Loaded bend parameters: %1").arg(filePath));
+    statusBar()->showMessage(QStringLiteral("Bend parameters loaded"), 3000);
+    return true;
+}
+
+bool MainWindow::saveBendParametersFilePath(const QString &filePath, bool updateCurrentPath)
+{
+    if (filePath.trimmed().isEmpty()) {
+        return false;
+    }
+
+    QString errorMessage;
+    if (!JsonBendParametersStore::save(filePath, m_appSettings, &errorMessage)) {
+        ui->logList->addItem(QStringLiteral("Bend parameters save failed: %1").arg(errorMessage));
+        QMessageBox::warning(this, QStringLiteral("Bend Parameters Save Failed"), errorMessage);
+        statusBar()->showMessage(QStringLiteral("Bend parameters save failed"), 5000);
+        return false;
+    }
+
+    if (updateCurrentPath) {
+        m_currentBendParametersFilePath = filePath;
+        updateBendParametersStatusUi();
+        saveAppSettings();
+    } else {
+        updateBendParametersStatusUi();
+    }
+
+    ui->logList->addItem(QStringLiteral("Saved bend parameters: %1").arg(filePath));
+    statusBar()->showMessage(QStringLiteral("Bend parameters saved"), 3000);
+    return true;
+}
+
+void MainWindow::updateBendParametersStatusUi()
+{
+    if (ui == nullptr) {
+        return;
+    }
+
+    const QString filePath = m_currentBendParametersFilePath.trimmed().isEmpty()
+                                 ? bendParametersFilePath()
+                                 : m_currentBendParametersFilePath;
+    const QFileInfo fileInfo(filePath);
+    ui->bendParametersNameValue->setText(fileInfo.fileName().isEmpty()
+                                             ? QStringLiteral("(unnamed)")
+                                             : fileInfo.fileName());
+    ui->bendParametersModifiedValue->setText(fileInfo.exists()
+                                                 ? fileInfo.lastModified().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"))
+                                                 : QStringLiteral("-"));
+}
+
+void MainWindow::openBendParametersFile()
+{
+    const QString initialPath = m_currentBendParametersFilePath.isEmpty()
+                                    ? bendParametersFilePath()
+                                    : m_currentBendParametersFilePath;
+    const QString filePath = QFileDialog::getOpenFileName(this,
+                                                          QStringLiteral("Open Bend Parameters"),
+                                                          initialPath,
+                                                          QStringLiteral("Bend Parameters (*.json)"));
+    if (filePath.isEmpty()) {
+        return;
+    }
+
+    loadBendParametersFilePath(filePath);
+}
+
+void MainWindow::saveBendParametersFile()
+{
+    const QString filePath = m_currentBendParametersFilePath.isEmpty()
+                                 ? bendParametersFilePath()
+                                 : m_currentBendParametersFilePath;
+    saveBendParametersFilePath(filePath, true);
+}
+
+void MainWindow::saveBendParametersFileAs()
+{
+    const QString initialPath = m_currentBendParametersFilePath.isEmpty()
+                                    ? bendParametersFilePath()
+                                    : m_currentBendParametersFilePath;
+    const QString filePath = QFileDialog::getSaveFileName(this,
+                                                          QStringLiteral("Save Bend Parameters As"),
+                                                          initialPath,
+                                                          QStringLiteral("Bend Parameters (*.json)"));
+    if (filePath.isEmpty()) {
+        return;
+    }
+
+    saveBendParametersFilePath(filePath, true);
+}
+
+void MainWindow::addAngleBendRow()
+{
+    bool ok = false;
+    const double angleDeg = QInputDialog::getDouble(this,
+                                                    QStringLiteral("Add Angle"),
+                                                    QStringLiteral("Angle"),
+                                                    0.0,
+                                                    -100000.0,
+                                                    100000.0,
+                                                    2,
+                                                    &ok);
+    if (!ok) {
+        return;
+    }
+
+    for (const AngleBendTableRow &existingRow : std::as_const(m_appSettings.angleBendTable)) {
+        if (qAbs(existingRow.angleDeg - angleDeg) < 1e-9) {
+            statusBar()->showMessage(QStringLiteral("Angle already exists"), 3000);
+            return;
+        }
+    }
+
+    AngleBendTableRow newRow;
+    newRow.angleDeg = angleDeg;
+    sortAngleBendTable(&m_appSettings.angleBendTable);
+    int insertIndex = 0;
+    while (insertIndex < m_appSettings.angleBendTable.size()
+           && m_appSettings.angleBendTable.at(insertIndex).angleDeg < angleDeg) {
+        ++insertIndex;
+    }
+
+    if (m_appSettings.angleBendTable.isEmpty()) {
+        newRow.left = angleDeg;
+        newRow.right = angleDeg;
+    } else if (insertIndex <= 0) {
+        const AngleBendTableRow &nearest = m_appSettings.angleBendTable.first();
+        newRow.left = nearest.left;
+        newRow.right = nearest.right;
+        newRow.startCorrection = nearest.startCorrection;
+        newRow.endCorrection = nearest.endCorrection;
+    } else if (insertIndex >= m_appSettings.angleBendTable.size()) {
+        const AngleBendTableRow &nearest = m_appSettings.angleBendTable.last();
+        newRow.left = nearest.left;
+        newRow.right = nearest.right;
+        newRow.startCorrection = nearest.startCorrection;
+        newRow.endCorrection = nearest.endCorrection;
+    } else {
+        const AngleBendTableRow &leftRow = m_appSettings.angleBendTable.at(insertIndex - 1);
+        const AngleBendTableRow &rightRow = m_appSettings.angleBendTable.at(insertIndex);
+        newRow.left = interpolateLinear(angleDeg, leftRow.angleDeg, leftRow.left, rightRow.angleDeg, rightRow.left);
+        newRow.right = interpolateLinear(angleDeg, leftRow.angleDeg, leftRow.right, rightRow.angleDeg, rightRow.right);
+        newRow.startCorrection = interpolateLinear(angleDeg,
+                                                   leftRow.angleDeg,
+                                                   leftRow.startCorrection,
+                                                   rightRow.angleDeg,
+                                                   rightRow.startCorrection);
+        newRow.endCorrection = interpolateLinear(angleDeg,
+                                                 leftRow.angleDeg,
+                                                 leftRow.endCorrection,
+                                                 rightRow.angleDeg,
+                                                 rightRow.endCorrection);
+    }
+
+    m_appSettings.angleBendTable.append(newRow);
+    sortAngleBendTable(&m_appSettings.angleBendTable);
+    saveAppSettings();
+    populateBendTables();
+    statusBar()->showMessage(QStringLiteral("Angle bend row added"), 2000);
+}
+
+void MainWindow::addArcBendRow()
+{
+    bool ok = false;
+    const double radiusMm = QInputDialog::getDouble(this,
+                                                    QStringLiteral("Add Radius"),
+                                                    QStringLiteral("Radius"),
+                                                    0.0,
+                                                    -100000.0,
+                                                    100000.0,
+                                                    2,
+                                                    &ok);
+    if (!ok) {
+        return;
+    }
+
+    for (const ArcBendTableRow &existingRow : std::as_const(m_appSettings.arcBendTable)) {
+        if (qAbs(existingRow.radiusMm - radiusMm) < 1e-9) {
+            statusBar()->showMessage(QStringLiteral("Radius already exists"), 3000);
+            return;
+        }
+    }
+
+    ArcBendTableRow newRow;
+    newRow.radiusMm = radiusMm;
+    sortArcBendTable(&m_appSettings.arcBendTable);
+    int insertIndex = 0;
+    while (insertIndex < m_appSettings.arcBendTable.size()
+           && m_appSettings.arcBendTable.at(insertIndex).radiusMm < radiusMm) {
+        ++insertIndex;
+    }
+
+    if (m_appSettings.arcBendTable.isEmpty()) {
+        newRow.hits = qRound(90.0 / AppSettings::DefaultArcHitAngleDeg);
+        newRow.right90 = AppSettings::DefaultArcHitAngleDeg * 100.0;
+        newRow.right45 = AppSettings::DefaultArcHitAngleDeg * 100.0;
+        newRow.left90 = AppSettings::DefaultArcHitAngleDeg * 100.0;
+        newRow.left45 = AppSettings::DefaultArcHitAngleDeg * 100.0;
+    } else if (insertIndex <= 0) {
+        newRow = m_appSettings.arcBendTable.first();
+        newRow.radiusMm = radiusMm;
+    } else if (insertIndex >= m_appSettings.arcBendTable.size()) {
+        newRow = m_appSettings.arcBendTable.last();
+        newRow.radiusMm = radiusMm;
+    } else {
+        const ArcBendTableRow &leftRow = m_appSettings.arcBendTable.at(insertIndex - 1);
+        const ArcBendTableRow &rightRow = m_appSettings.arcBendTable.at(insertIndex);
+        newRow.hits = qRound(interpolateLinear(radiusMm,
+                                               leftRow.radiusMm,
+                                               leftRow.hits,
+                                               rightRow.radiusMm,
+                                               rightRow.hits));
+        newRow.right90 = interpolateLinear(radiusMm, leftRow.radiusMm, leftRow.right90, rightRow.radiusMm, rightRow.right90);
+        newRow.right45 = interpolateLinear(radiusMm, leftRow.radiusMm, leftRow.right45, rightRow.radiusMm, rightRow.right45);
+        newRow.left90 = interpolateLinear(radiusMm, leftRow.radiusMm, leftRow.left90, rightRow.radiusMm, rightRow.left90);
+        newRow.left45 = interpolateLinear(radiusMm, leftRow.radiusMm, leftRow.left45, rightRow.radiusMm, rightRow.left45);
+        newRow.startCorrection = interpolateLinear(radiusMm,
+                                                   leftRow.radiusMm,
+                                                   leftRow.startCorrection,
+                                                   rightRow.radiusMm,
+                                                   rightRow.startCorrection);
+        newRow.endCorrection = interpolateLinear(radiusMm,
+                                                 leftRow.radiusMm,
+                                                 leftRow.endCorrection,
+                                                 rightRow.radiusMm,
+                                                 rightRow.endCorrection);
+        newRow.bridgeReduction = interpolateLinear(radiusMm,
+                                                   leftRow.radiusMm,
+                                                   leftRow.bridgeReduction,
+                                                   rightRow.radiusMm,
+                                                   rightRow.bridgeReduction);
+    }
+
+    m_appSettings.arcBendTable.append(newRow);
+    sortArcBendTable(&m_appSettings.arcBendTable);
+    saveAppSettings();
+    populateBendTables();
+    statusBar()->showMessage(QStringLiteral("Arc bend row added"), 2000);
 }
 
 void MainWindow::handleFlagScaleChanged(int value)
@@ -2977,7 +3960,7 @@ void MainWindow::handleFlagFillChanged(bool checked)
     saveAppSettings();
 }
 
-void MainWindow::handlePortLengthChanged()
+void MainWindow::handleBridgeLengthChanged()
 {
     {
         const QSignalBlocker minBlocker(ui->portMinLengthSpinBox);
@@ -2989,15 +3972,15 @@ void MainWindow::handlePortLengthChanged()
 
     const double minValue = ui->portMinLengthSpinBox->value();
     const double maxValue = ui->portMaxLengthSpinBox->value();
-    if (qFuzzyCompare(m_appSettings.portMinLengthMm + 1.0, minValue + 1.0)
-        && qFuzzyCompare(m_appSettings.portMaxLengthMm + 1.0, maxValue + 1.0)) {
+    if (qFuzzyCompare(m_appSettings.bridgeMinLengthMm + 1.0, minValue + 1.0)
+        && qFuzzyCompare(m_appSettings.bridgeMaxLengthMm + 1.0, maxValue + 1.0)) {
         return;
     }
 
-    m_appSettings.portMinLengthMm = minValue;
-    m_appSettings.portMaxLengthMm = maxValue;
-    recomputeDetectedPorts();
-    ui->dxfView->setDetectedPorts(m_geometryModel.detectedPorts);
+    m_appSettings.bridgeMinLengthMm = minValue;
+    m_appSettings.bridgeMaxLengthMm = maxValue;
+    recomputeDetectedBridges();
+    ui->dxfView->setDetectedBridges(m_geometryModel.detectedBridges);
     populateEntityProperties();
     updateProjectSummary();
     saveAppSettings();
@@ -3101,7 +4084,22 @@ void MainWindow::updateColorButton(QPushButton *button, const QColor &color, con
         return;
     }
 
-    button->setText(QStringLiteral("%1 (%2)").arg(fallbackText, color.name(QColor::HexRgb)));
+    QPixmap swatch(34, 20);
+    swatch.fill(Qt::transparent);
+    {
+        QPainter painter(&swatch);
+        painter.setRenderHint(QPainter::Antialiasing, false);
+        painter.setPen(QPen(QColor(235, 235, 235), 1.0));
+        painter.setBrush(color);
+        painter.drawRect(0, 0, swatch.width() - 1, swatch.height() - 1);
+    }
+
+    button->setIcon(QIcon(swatch));
+    button->setIconSize(swatch.size());
+    button->setText(QString());
+    button->setMinimumSize(44, 26);
+    button->setToolTip(QStringLiteral("%1: %2")
+                           .arg(fallbackText, color.name(QColor::HexRgb)));
     button->setStyleSheet(QString());
 }
 
@@ -3121,7 +4119,7 @@ void MainWindow::updateViewColorUi()
     updateColorButton(ui->viewBackgroundColorButton, m_appSettings.viewBackgroundColor, QStringLiteral("Background"));
     updateColorButton(ui->startFlagColorButton, m_appSettings.startFlagColor, QStringLiteral("Start Flag"));
     updateColorButton(ui->endFlagColorButton, m_appSettings.endFlagColor, QStringLiteral("End Flag"));
-    updateColorButton(ui->portColorButton, m_appSettings.portColor, QStringLiteral("Port"));
+    updateColorButton(ui->bridgeColorButton, m_appSettings.bridgeColor, tr("Bridge"));
 
     {
         const QSignalBlocker fillBlocker(ui->fillFlagsCheckBox);
@@ -3137,11 +4135,11 @@ void MainWindow::updateViewColorUi()
     }
     {
         const QSignalBlocker minBlocker(ui->portMinLengthSpinBox);
-        ui->portMinLengthSpinBox->setValue(m_appSettings.portMinLengthMm);
+        ui->portMinLengthSpinBox->setValue(m_appSettings.bridgeMinLengthMm);
     }
     {
         const QSignalBlocker maxBlocker(ui->portMaxLengthSpinBox);
-        ui->portMaxLengthSpinBox->setValue(m_appSettings.portMaxLengthMm);
+        ui->portMaxLengthSpinBox->setValue(m_appSettings.bridgeMaxLengthMm);
     }
     ui->flagScaleValueLabel->setText(QStringLiteral("%1 %")
                                          .arg(QString::number(qRound(m_appSettings.flagScale * 100.0))));
@@ -3163,12 +4161,12 @@ void MainWindow::updateViewColorUi()
     colors.breakPreviewColor = m_appSettings.breakPreviewColor;
     colors.startFlagColor = m_appSettings.startFlagColor;
     colors.endFlagColor = m_appSettings.endFlagColor;
-    colors.portColor = m_appSettings.portColor;
+    colors.bridgeColor = m_appSettings.bridgeColor;
     colors.fillFlags = m_appSettings.fillFlags;
     colors.flagScale = m_appSettings.flagScale;
     colors.handleScale = m_appSettings.handleScale;
     ui->dxfView->setViewColors(colors);
-    ui->dxfView->setDetectedPorts(m_geometryModel.detectedPorts);
+    ui->dxfView->setDetectedBridges(m_geometryModel.detectedBridges);
     updateFlagPreview();
     updateHandlePreview();
 }
@@ -3294,15 +4292,23 @@ void MainWindow::updateToolStatus()
         break;
     case ToolMode::FilletPickFirst:
         ui->dxfView->setBreakPreviewEnabled(false);
-        statusBar()->showMessage(
-            QStringLiteral("Fillet r=%1 mm: pick first LINE, right click to cancel")
-                .arg(QString::number(m_pendingFilletRadius, 'f', 3)));
+        if (qFuzzyIsNull(m_pendingFilletRadius)) {
+            statusBar()->showMessage(QStringLiteral("Join lines: pick first LINE, right click to cancel"));
+        } else {
+            statusBar()->showMessage(
+                QStringLiteral("Fillet r=%1 mm: pick first LINE, right click to cancel")
+                    .arg(QString::number(m_pendingFilletRadius, 'f', 3)));
+        }
         break;
     case ToolMode::FilletPickSecond:
         ui->dxfView->setBreakPreviewEnabled(false);
-        statusBar()->showMessage(
-            QStringLiteral("Fillet r=%1 mm: pick second LINE, right click to cancel")
-                .arg(QString::number(m_pendingFilletRadius, 'f', 3)));
+        if (qFuzzyIsNull(m_pendingFilletRadius)) {
+            statusBar()->showMessage(QStringLiteral("Join lines: pick second LINE, right click to cancel"));
+        } else {
+            statusBar()->showMessage(
+                QStringLiteral("Fillet r=%1 mm: pick second LINE, right click to cancel")
+                    .arg(QString::number(m_pendingFilletRadius, 'f', 3)));
+        }
         break;
     }
 }
@@ -3327,7 +4333,7 @@ void MainWindow::updatePendingTrimPreview()
     const QList<DirectedPendingEntityInfo> directedInfos =
         directedPendingEntityInfos(m_geometryModel.dxfDocument,
                                    m_pendingRuleProfileEntityIds,
-                                   m_geometryModel.detectedPorts);
+                                   m_geometryModel.detectedBridges);
     if (existingIndex >= directedInfos.size()) {
         ui->dxfView->setPendingTrimPreview({}, false);
         return;
@@ -3355,6 +4361,17 @@ void MainWindow::applyUndoRedoDocument(const DxfDocument &document)
     m_isApplyingUndoRedo = false;
 }
 
+void MainWindow::applyUndoRedoProjectDocument(const ProjectDocument &document)
+{
+    m_isApplyingUndoRedo = true;
+    m_projectDocument = document;
+    const DxfDocument geometry = m_projectDocument.hasGeometrySnapshot
+                                     ? m_projectDocument.geometrySnapshot
+                                     : m_geometryModel.dxfDocument;
+    applyGeometryDocument(geometry, false);
+    m_isApplyingUndoRedo = false;
+}
+
 void GeometryEditCommand::undo()
 {
     m_window->applyUndoRedoDocument(m_before);
@@ -3368,6 +4385,21 @@ void GeometryEditCommand::redo()
     }
 
     m_window->applyUndoRedoDocument(m_after);
+}
+
+void ProjectDocumentEditCommand::undo()
+{
+    m_window->applyUndoRedoProjectDocument(m_before);
+}
+
+void ProjectDocumentEditCommand::redo()
+{
+    if (m_firstRedo) {
+        m_firstRedo = false;
+        return;
+    }
+
+    m_window->applyUndoRedoProjectDocument(m_after);
 }
 
 void MainWindow::populateToolTable()
@@ -3399,6 +4431,67 @@ void MainWindow::populateToolTable()
         ++row;
     }
     m_isPopulatingToolTable = false;
+}
+
+void MainWindow::populateBendTables()
+{
+    m_isPopulatingBendTables = true;
+    sortAngleBendTable(&m_appSettings.angleBendTable);
+    sortArcBendTable(&m_appSettings.arcBendTable);
+
+    {
+        const QSignalBlocker blocker(ui->angleBendTableWidget);
+        ui->angleBendTableWidget->setRowCount(m_appSettings.angleBendTable.size());
+        for (int row = 0; row < m_appSettings.angleBendTable.size(); ++row) {
+            const AngleBendTableRow &tableRow = m_appSettings.angleBendTable.at(row);
+            ui->angleBendTableWidget->setItem(row, 0, new QTableWidgetItem(QString::number(tableRow.angleDeg, 'f', 2)));
+            ui->angleBendTableWidget->setItem(row, 1, new QTableWidgetItem(QString::number(tableRow.left, 'f', 2)));
+            ui->angleBendTableWidget->setItem(row, 2, new QTableWidgetItem(QString::number(tableRow.right, 'f', 2)));
+            ui->angleBendTableWidget->setItem(row, 3, new QTableWidgetItem(QString::number(tableRow.startCorrection, 'f', 2)));
+            ui->angleBendTableWidget->setItem(row, 4, new QTableWidgetItem(QString::number(tableRow.endCorrection, 'f', 2)));
+        }
+    }
+
+    {
+        const QSignalBlocker blocker(ui->arcBendTableWidget);
+        ui->arcBendTableWidget->setRowCount(m_appSettings.arcBendTable.size());
+        for (int row = 0; row < m_appSettings.arcBendTable.size(); ++row) {
+            const ArcBendTableRow &tableRow = m_appSettings.arcBendTable.at(row);
+            ui->arcBendTableWidget->setItem(row, 0, new QTableWidgetItem(QString::number(tableRow.radiusMm, 'f', 2)));
+            ui->arcBendTableWidget->setItem(row, 1, new QTableWidgetItem(QString::number(tableRow.hits)));
+            ui->arcBendTableWidget->setItem(row, 2, new QTableWidgetItem(QString::number(tableRow.right90, 'f', 2)));
+            ui->arcBendTableWidget->setItem(row, 3, new QTableWidgetItem(QString::number(tableRow.right45, 'f', 2)));
+            ui->arcBendTableWidget->setItem(row, 4, new QTableWidgetItem(QString::number(tableRow.left90, 'f', 2)));
+            ui->arcBendTableWidget->setItem(row, 5, new QTableWidgetItem(QString::number(tableRow.left45, 'f', 2)));
+            ui->arcBendTableWidget->setItem(row, 6, new QTableWidgetItem(QString::number(tableRow.startCorrection, 'f', 2)));
+            ui->arcBendTableWidget->setItem(row, 7, new QTableWidgetItem(QString::number(tableRow.endCorrection, 'f', 2)));
+            ui->arcBendTableWidget->setItem(row, 8, new QTableWidgetItem(QString::number(tableRow.bridgeReduction, 'f', 2)));
+
+            auto *button = new QPushButton(QStringLiteral("Recalculate"), ui->arcBendTableWidget);
+            connect(button, &QPushButton::clicked, this, [this, row] {
+                if (row < 0 || row >= m_appSettings.arcBendTable.size()) {
+                    return;
+                }
+                ArcBendTableRow &tableRow = m_appSettings.arcBendTable[row];
+                if (tableRow.hits <= 0) {
+                    statusBar()->showMessage(QStringLiteral("Hits must be greater than zero"), 3000);
+                    return;
+                }
+                const double newAngle = 90.0 / static_cast<double>(tableRow.hits);
+                const double newValue = newAngle * 100.0;
+                tableRow.right90 = newValue;
+                tableRow.right45 = newValue;
+                tableRow.left90 = newValue;
+                tableRow.left45 = newValue;
+                saveAppSettings();
+                populateBendTables();
+                statusBar()->showMessage(QStringLiteral("Arc bend row recalculated"), 2000);
+            });
+            ui->arcBendTableWidget->setCellWidget(row, 9, button);
+        }
+    }
+
+    m_isPopulatingBendTables = false;
 }
 
 void MainWindow::populateLayerTree()
@@ -3468,7 +4561,7 @@ void MainWindow::handleLayerTreeItemChanged(QTreeWidgetItem *item, int column)
     }
 
     ui->dxfView->setDocument(m_geometryModel.dxfDocument, false);
-    ui->dxfView->setDetectedPorts(m_geometryModel.detectedPorts);
+    ui->dxfView->setDetectedBridges(m_geometryModel.detectedBridges);
     updateRuleProfileViewState();
     populateEntityProperties();
     updateProjectSummary();
@@ -3548,55 +4641,56 @@ void MainWindow::populateEntityProperties()
 {
     populateSelectedEntityPropertiesTree();
     const QSet<QString> expandedKeys = expandedTreeKeys(ui->bladeLinePropertiesTree);
+    m_isPopulatingRuleProfileTree = true;
     ui->bladeLinePropertiesTree->clear();
 
-    auto appendPortDetails = [this](QTreeWidgetItem *parent, const DetectedPort &port) {
+    auto appendBridgeDetails = [this](QTreeWidgetItem *parent, const DetectedBridge &bridge) {
         if (parent == nullptr) {
             return;
         }
 
         auto *typeItem = new QTreeWidgetItem(parent);
         typeItem->setText(0, QStringLiteral("Type"));
-        typeItem->setText(1, port.type == DetectedPortType::Arc ? QStringLiteral("Arc") : QStringLiteral("Line"));
+        typeItem->setText(1, bridge.type == DetectedBridgeType::Arc ? QStringLiteral("Arc") : QStringLiteral("Line"));
 
         auto *lengthItem = new QTreeWidgetItem(parent);
         lengthItem->setText(0, QStringLiteral("Length"));
-        lengthItem->setText(1, QStringLiteral("%1 mm").arg(QString::number(port.lengthMm, 'f', 3)));
+        lengthItem->setText(1, QStringLiteral("%1 mm").arg(QString::number(bridge.lengthMm, 'f', 3)));
 
         auto *startItem = new QTreeWidgetItem(parent);
         startItem->setText(0, QStringLiteral("Start point"));
-        startItem->setText(1, pointText(port.startPoint));
+        startItem->setText(1, pointText(bridge.startPoint));
 
         auto *endItem = new QTreeWidgetItem(parent);
         endItem->setText(0, QStringLiteral("End point"));
-        endItem->setText(1, pointText(port.endPoint));
+        endItem->setText(1, pointText(bridge.endPoint));
 
         auto *entityLinkItem = new QTreeWidgetItem(parent);
         entityLinkItem->setText(0, QStringLiteral("Linked entities"));
         entityLinkItem->setText(1, QStringLiteral("%1")
                                        .arg(QStringList{
-                                           port.relatedEntityIndexes.isEmpty() ? QStringLiteral("-")
-                                                                               : QString::number(port.relatedEntityIndexes.value(0)),
-                                           port.relatedEntityIndexes.size() < 2 ? QStringLiteral("-")
-                                                                                : QString::number(port.relatedEntityIndexes.value(1))}
+                                           bridge.relatedEntityIndexes.isEmpty() ? QStringLiteral("-")
+                                                                                 : QString::number(bridge.relatedEntityIndexes.value(0)),
+                                           bridge.relatedEntityIndexes.size() < 2 ? QStringLiteral("-")
+                                                                                  : QString::number(bridge.relatedEntityIndexes.value(1))}
                                                 .join(QStringLiteral(" -> "))));
 
-        if (port.type == DetectedPortType::Arc) {
+        if (bridge.type == DetectedBridgeType::Arc) {
             auto *centerItem = new QTreeWidgetItem(parent);
             centerItem->setText(0, QStringLiteral("Center"));
-            centerItem->setText(1, pointText(port.center));
+            centerItem->setText(1, pointText(bridge.center));
 
             auto *radiusItem = new QTreeWidgetItem(parent);
             radiusItem->setText(0, QStringLiteral("Radius"));
-            radiusItem->setText(1, QString::number(port.radius, 'f', 3));
+            radiusItem->setText(1, QString::number(bridge.radius, 'f', 3));
 
             auto *startAngleItem = new QTreeWidgetItem(parent);
             startAngleItem->setText(0, QStringLiteral("Start angle"));
-            startAngleItem->setText(1, QStringLiteral("%1 deg").arg(QString::number(port.startAngleDeg, 'f', 3)));
+            startAngleItem->setText(1, QStringLiteral("%1 deg").arg(QString::number(bridge.startAngleDeg, 'f', 3)));
 
             auto *endAngleItem = new QTreeWidgetItem(parent);
             endAngleItem->setText(0, QStringLiteral("End angle"));
-            endAngleItem->setText(1, QStringLiteral("%1 deg").arg(QString::number(port.endAngleDeg, 'f', 3)));
+            endAngleItem->setText(1, QStringLiteral("%1 deg").arg(QString::number(bridge.endAngleDeg, 'f', 3)));
         }
     };
 
@@ -3675,7 +4769,7 @@ void MainWindow::populateEntityProperties()
 
     auto appendFamilyDetails = [&](QTreeWidgetItem *propertiesRoot,
                                    const QList<int> &familyEntityIndexes,
-                                   const QList<int> &familyPortIndexes) {
+                                   const QList<int> &familyBridgeIndexes) {
         if (propertiesRoot == nullptr || familyEntityIndexes.isEmpty()) {
             return;
         }
@@ -3693,10 +4787,10 @@ void MainWindow::populateEntityProperties()
             }
         }
 
-        double portLength = 0.0;
-        for (int portIndex : familyPortIndexes) {
-            if (portIndex >= 0 && portIndex < m_geometryModel.detectedPorts.size()) {
-                portLength += m_geometryModel.detectedPorts.at(portIndex).lengthMm;
+        double bridgeLength = 0.0;
+        for (int bridgeIndex : familyBridgeIndexes) {
+            if (bridgeIndex >= 0 && bridgeIndex < m_geometryModel.detectedBridges.size()) {
+                bridgeLength += m_geometryModel.detectedBridges.at(bridgeIndex).lengthMm;
             }
         }
 
@@ -3706,13 +4800,13 @@ void MainWindow::populateEntityProperties()
                    ? QStringLiteral("Arc segment")
                    : QStringLiteral("Line segment"));
         addRow(QStringLiteral("Entity count"), QString::number(familyEntityIndexes.size()));
-        addRow(QStringLiteral("Port count"), QString::number(familyPortIndexes.size()));
+        addRow(tr("Bridge count"), QString::number(familyBridgeIndexes.size()));
         addRow(QStringLiteral("Geometry length"),
                QStringLiteral("%1 mm").arg(QString::number(geometryLength, 'f', 3)));
-        addRow(QStringLiteral("Port length"),
-               QStringLiteral("%1 mm").arg(QString::number(portLength, 'f', 3)));
+        addRow(tr("Bridge length"),
+               QStringLiteral("%1 mm").arg(QString::number(bridgeLength, 'f', 3)));
         addRow(QStringLiteral("Total length"),
-               QStringLiteral("%1 mm").arg(QString::number(geometryLength + portLength, 'f', 3)));
+               QStringLiteral("%1 mm").arg(QString::number(geometryLength + bridgeLength, 'f', 3)));
 
         if (firstEntity.type == DxfEntityType::Arc) {
             addRow(QStringLiteral("Center"), pointText(firstEntity.center));
@@ -3755,17 +4849,17 @@ void MainWindow::populateEntityProperties()
 
             if (pendingIndex > 0) {
                 const int previousIndex = findEntityIndexById(m_pendingRuleProfileEntityIds.at(pendingIndex - 1));
-                const int portIndex = findPortIndexForEntities(m_geometryModel.detectedPorts,
-                                                               previousIndex,
-                                                               resolvedIndex);
-                if (portIndex >= 0 && portIndex < m_geometryModel.detectedPorts.size()) {
-                    const DetectedPort &port = m_geometryModel.detectedPorts.at(portIndex);
-                    auto *portItem = new QTreeWidgetItem(pendingHeader);
-                    portItem->setData(0, BladeTreeItemTypeRole, BladeTreeItemTypePort);
-                    portItem->setData(0, BladeTreePortIndexRole, portIndex);
-                    portItem->setText(0, QStringLiteral("Port %1").arg(pendingIndex));
-                    portItem->setText(1, QStringLiteral("%1 mm").arg(QString::number(port.lengthMm, 'f', 3)));
-                    appendPortDetails(portItem, port);
+                const int bridgeIndex = findBridgeIndexForEntities(m_geometryModel.detectedBridges,
+                                                                   previousIndex,
+                                                                   resolvedIndex);
+                if (bridgeIndex >= 0 && bridgeIndex < m_geometryModel.detectedBridges.size()) {
+                    const DetectedBridge &bridge = m_geometryModel.detectedBridges.at(bridgeIndex);
+                    auto *bridgeItem = new QTreeWidgetItem(pendingHeader);
+                    bridgeItem->setData(0, BladeTreeItemTypeRole, BladeTreeItemTypeBridge);
+                    bridgeItem->setData(0, BladeTreeBridgeIndexRole, bridgeIndex);
+                    bridgeItem->setText(0, tr("Bridge %1").arg(pendingIndex));
+                    bridgeItem->setText(1, QStringLiteral("%1 mm").arg(QString::number(bridge.lengthMm, 'f', 3)));
+                    appendBridgeDetails(bridgeItem, bridge);
                 }
             }
 
@@ -3790,12 +4884,12 @@ void MainWindow::populateEntityProperties()
             linesRoot->setText(0, QStringLiteral("Lines"));
             auto *arcsRoot = new QTreeWidgetItem(chainRoot);
             arcsRoot->setText(0, QStringLiteral("Arcs"));
-            auto *portsRoot = new QTreeWidgetItem(chainRoot);
-            portsRoot->setText(0, QStringLiteral("Ports"));
+            auto *bridgesRoot = new QTreeWidgetItem(chainRoot);
+            bridgesRoot->setText(0, tr("Bridges"));
 
             int lineCount = 0;
             int arcCount = 0;
-            int portCount = 0;
+            int bridgeCount = 0;
 
             for (int entityIndex : chain) {
                 if (entityIndex < 0 || entityIndex >= m_geometryModel.dxfDocument.entities.size()) {
@@ -3819,20 +4913,20 @@ void MainWindow::populateEntityProperties()
             const QList<int> pendingIndexes = resolveRuleProfileIndexes(m_geometryModel.dxfDocument, m_pendingRuleProfileEntityIds);
             int previousIndex = pendingIndexes.isEmpty() ? -1 : pendingIndexes.last();
             for (int entityIndex : chain) {
-                const int portIndex = findPortIndexForEntities(m_geometryModel.detectedPorts, previousIndex, entityIndex);
+                const int bridgeIndex = findBridgeIndexForEntities(m_geometryModel.detectedBridges, previousIndex, entityIndex);
                 previousIndex = entityIndex;
-                if (portIndex < 0 || portIndex >= m_geometryModel.detectedPorts.size()) {
+                if (bridgeIndex < 0 || bridgeIndex >= m_geometryModel.detectedBridges.size()) {
                     continue;
                 }
 
-                ++portCount;
-                const DetectedPort &port = m_geometryModel.detectedPorts.at(portIndex);
-                auto *item = new QTreeWidgetItem(portsRoot);
-                item->setData(0, BladeTreeItemTypeRole, BladeTreeItemTypePort);
-                item->setData(0, BladeTreePortIndexRole, portIndex);
-                item->setText(0, QStringLiteral("Port %1").arg(portCount));
-                item->setText(1, QStringLiteral("%1 mm").arg(QString::number(port.lengthMm, 'f', 3)));
-                appendPortDetails(item, port);
+                ++bridgeCount;
+                const DetectedBridge &bridge = m_geometryModel.detectedBridges.at(bridgeIndex);
+                auto *item = new QTreeWidgetItem(bridgesRoot);
+                item->setData(0, BladeTreeItemTypeRole, BladeTreeItemTypeBridge);
+                item->setData(0, BladeTreeBridgeIndexRole, bridgeIndex);
+                item->setText(0, tr("Bridge %1").arg(bridgeCount));
+                item->setText(1, QStringLiteral("%1 mm").arg(QString::number(bridge.lengthMm, 'f', 3)));
+                appendBridgeDetails(item, bridge);
             }
 
             if (lineCount == 0) {
@@ -3841,19 +4935,23 @@ void MainWindow::populateEntityProperties()
             if (arcCount == 0) {
                 arcsRoot->setText(1, QStringLiteral("0"));
             }
-            if (portCount == 0) {
-                portsRoot->setText(1, QStringLiteral("0"));
+            if (bridgeCount == 0) {
+                bridgesRoot->setText(1, QStringLiteral("0"));
             }
         }
     }
 
     for (int pathIndex = 0; pathIndex < m_projectDocument.ruleProfiles.size(); ++pathIndex) {
         const QStringList &ruleProfile = m_projectDocument.ruleProfiles.at(pathIndex);
+        const RuleProfileOptions ruleProfileOptions =
+            pathIndex >= 0 && pathIndex < m_projectDocument.ruleProfileOptions.size()
+                ? m_projectDocument.ruleProfileOptions.at(pathIndex)
+                : RuleProfileOptions();
         const bool isActiveRuleProfile = pathIndex == m_projectDocument.activeRuleProfileIndex;
         const PendingRuleProfileState ruleProfileState =
             pendingRuleProfileState(m_geometryModel.dxfDocument,
                                     ruleProfile,
-                                    m_geometryModel.detectedPorts);
+                                    m_geometryModel.detectedBridges);
         auto *headerItem = new QTreeWidgetItem(ui->bladeLinePropertiesTree);
         headerItem->setData(0, BladeTreeItemTypeRole, BladeTreeItemTypePath);
         headerItem->setData(0, BladeTreePathIndexRole, pathIndex);
@@ -3865,8 +4963,63 @@ void MainWindow::populateEntityProperties()
         headerFont.setBold(isActiveRuleProfile);
         headerItem->setFont(0, headerFont);
         headerItem->setFont(1, headerFont);
+
+        auto addEditableRuleProfileOption = [headerItem](const QString &name,
+                                                         const QString &value,
+                                                         const char *optionKey,
+                                                         bool highlighted) {
+            auto *item = new QTreeWidgetItem(headerItem);
+            item->setText(0, name);
+            item->setText(1, value);
+            item->setData(0, BladeTreeOptionKeyRole, QString::fromLatin1(optionKey));
+            item->setFlags(item->flags() | Qt::ItemIsEditable);
+            const QBrush changedBrush(highlighted ? QColor(255, 247, 210) : Qt::transparent);
+            item->setBackground(0, changedBrush);
+            item->setBackground(1, changedBrush);
+        };
+
+        auto addBooleanRuleProfileOption = [headerItem](const QString &name,
+                                                        bool value,
+                                                        const char *optionKey,
+                                                        bool highlighted) {
+            auto *item = new QTreeWidgetItem(headerItem);
+            item->setText(0, name);
+            item->setText(1, QString());
+            item->setData(0, BladeTreeOptionKeyRole, QString::fromLatin1(optionKey));
+            item->setFlags((item->flags() | Qt::ItemIsUserCheckable) & ~Qt::ItemIsEditable);
+            item->setCheckState(1, value ? Qt::Checked : Qt::Unchecked);
+            const QBrush changedBrush(highlighted ? QColor(255, 247, 210) : Qt::transparent);
+            item->setBackground(0, changedBrush);
+            item->setBackground(1, changedBrush);
+        };
+
+        addEditableRuleProfileOption(QStringLiteral("Count"),
+                                     QString::number(ruleProfileOptions.count),
+                                     RuleProfileOptionCountKey,
+                                     ruleProfileOptions.count != RuleProfileOptions().count);
+        addBooleanRuleProfileOption(QStringLiteral("Mirror"),
+                                    ruleProfileOptions.mirror,
+                                    RuleProfileOptionMirrorKey,
+                                    ruleProfileOptions.mirror != RuleProfileOptions().mirror);
+        addEditableRuleProfileOption(QStringLiteral("Start correction"),
+                                     QString::number(ruleProfileOptions.startCorrectionMm, 'f', 2),
+                                     RuleProfileOptionStartCorrectionKey,
+                                     !qFuzzyCompare(ruleProfileOptions.startCorrectionMm + 1.0, RuleProfileOptions().startCorrectionMm + 1.0));
+        addEditableRuleProfileOption(QStringLiteral("End correction"),
+                                     QString::number(ruleProfileOptions.endCorrectionMm, 'f', 2),
+                                     RuleProfileOptionEndCorrectionKey,
+                                     !qFuzzyCompare(ruleProfileOptions.endCorrectionMm + 1.0, RuleProfileOptions().endCorrectionMm + 1.0));
+        addBooleanRuleProfileOption(QStringLiteral("Start Lip"),
+                                    ruleProfileOptions.startLip,
+                                    RuleProfileOptionStartLipKey,
+                                    ruleProfileOptions.startLip != RuleProfileOptions().startLip);
+        addBooleanRuleProfileOption(QStringLiteral("End Lip"),
+                                    ruleProfileOptions.endLip,
+                                    RuleProfileOptionEndLipKey,
+                                    ruleProfileOptions.endLip != RuleProfileOptions().endLip);
+
         double bladeGeometryLength = 0.0;
-        double bladePortLength = 0.0;
+        double bladeBridgeLength = 0.0;
         for (const QString &entityId : ruleProfile) {
             const int resolvedIndex = findEntityIndexById(entityId);
             if (resolvedIndex >= 0 && resolvedIndex < m_geometryModel.dxfDocument.entities.size()) {
@@ -3876,11 +5029,11 @@ void MainWindow::populateEntityProperties()
         for (int ruleProfileIndex = 1; ruleProfileIndex < ruleProfile.size(); ++ruleProfileIndex) {
             const int previousIndex = findEntityIndexById(ruleProfile.at(ruleProfileIndex - 1));
             const int resolvedIndex = findEntityIndexById(ruleProfile.at(ruleProfileIndex));
-            const int portIndex = findPortIndexForEntities(m_geometryModel.detectedPorts,
-                                                           previousIndex,
-                                                           resolvedIndex);
-            if (portIndex >= 0 && portIndex < m_geometryModel.detectedPorts.size()) {
-                bladePortLength += m_geometryModel.detectedPorts.at(portIndex).lengthMm;
+            const int bridgeIndex = findBridgeIndexForEntities(m_geometryModel.detectedBridges,
+                                                               previousIndex,
+                                                               resolvedIndex);
+            if (bridgeIndex >= 0 && bridgeIndex < m_geometryModel.detectedBridges.size()) {
+                bladeBridgeLength += m_geometryModel.detectedBridges.at(bridgeIndex).lengthMm;
             }
         }
 
@@ -3904,48 +5057,149 @@ void MainWindow::populateEntityProperties()
                              : QStringLiteral("-"));
         addBladeProperty(QStringLiteral("Geometry length"),
                          QStringLiteral("%1 mm").arg(QString::number(bladeGeometryLength, 'f', 3)));
-        addBladeProperty(QStringLiteral("Port length"),
-                         QStringLiteral("%1 mm").arg(QString::number(bladePortLength, 'f', 3)));
+        addBladeProperty(tr("Bridge length"),
+                         QStringLiteral("%1 mm").arg(QString::number(bladeBridgeLength, 'f', 3)));
         addBladeProperty(QStringLiteral("Total length"),
-                         QStringLiteral("%1 mm").arg(QString::number(bladeGeometryLength + bladePortLength, 'f', 3)));
+                         QStringLiteral("%1 mm").arg(QString::number(bladeGeometryLength + bladeBridgeLength, 'f', 3)));
 
         QTreeWidgetItem *familyItem = nullptr;
         QTreeWidgetItem *familyPropertiesItem = nullptr;
         int familyCount = 0;
         int previousResolvedIndex = -1;
         QList<int> currentFamilyEntityIndexes;
-        QList<int> currentFamilyPortIndexes;
+        QList<int> currentFamilyBridgeIndexes;
+        bool previousFamilyHasExitTangent = false;
+        QPointF previousFamilyExitTangent;
+        bool currentFamilyHasTangents = false;
+        QPointF currentFamilyEntryTangent;
+        QPointF currentFamilyExitTangent;
+        const QList<DirectedPendingEntityInfo> directedInfos =
+            directedPendingEntityInfos(m_geometryModel.dxfDocument,
+                                       ruleProfile,
+                                       m_geometryModel.detectedBridges);
+
+        while (m_projectDocument.ruleProfileSegmentOptions.size() <= pathIndex) {
+            m_projectDocument.ruleProfileSegmentOptions.append(QList<RuleProfileSegmentOptions>());
+        }
+
+        auto applyOptionRowHighlight = [](QTreeWidgetItem *rowItem,
+                                          QWidget *editorWidget,
+                                          bool highlighted) {
+            if (rowItem == nullptr) {
+                return;
+            }
+            const QBrush changedBrush(highlighted ? QColor(255, 247, 210) : Qt::transparent);
+            rowItem->setBackground(0, changedBrush);
+            rowItem->setBackground(1, changedBrush);
+            if (editorWidget != nullptr) {
+                editorWidget->setStyleSheet(highlighted
+                                                ? QStringLiteral("background-color: rgb(255, 247, 210);")
+                                                : QString());
+            }
+        };
+
+        auto findDirectedInfoForEntity = [&](int entityIndex) -> std::optional<DirectedPendingEntityInfo> {
+            for (const DirectedPendingEntityInfo &info : directedInfos) {
+                if (info.entityIndex == entityIndex) {
+                    return info;
+                }
+            }
+            return std::nullopt;
+        };
+
+        auto familyBoundaryTangents = [&](const QList<int> &familyEntityIndexes,
+                                          QPointF *entryTangent,
+                                          QPointF *exitTangent) {
+            if (entryTangent == nullptr || exitTangent == nullptr || familyEntityIndexes.isEmpty()) {
+                return false;
+            }
+
+            const std::optional<DirectedPendingEntityInfo> firstInfo =
+                findDirectedInfoForEntity(familyEntityIndexes.first());
+            const std::optional<DirectedPendingEntityInfo> lastInfo =
+                findDirectedInfoForEntity(familyEntityIndexes.last());
+            if (!firstInfo.has_value() || !lastInfo.has_value()) {
+                return false;
+            }
+
+            const DxfEntity &firstEntity = m_geometryModel.dxfDocument.entities.at(firstInfo->entityIndex);
+            const DxfEntity &lastEntity = m_geometryModel.dxfDocument.entities.at(lastInfo->entityIndex);
+            QPointF firstEntryTangent;
+            QPointF firstExitTangent;
+            QPointF lastEntryTangent;
+            QPointF lastExitTangent;
+            if (!directedTangentsForEntity(firstEntity,
+                                           firstInfo->pathStartPoint,
+                                           firstInfo->pathEndPoint,
+                                           &firstEntryTangent,
+                                           &firstExitTangent)
+                || !directedTangentsForEntity(lastEntity,
+                                              lastInfo->pathStartPoint,
+                                              lastInfo->pathEndPoint,
+                                              &lastEntryTangent,
+                                              &lastExitTangent)) {
+                return false;
+            }
+
+            *entryTangent = firstEntryTangent;
+            *exitTangent = lastExitTangent;
+            return true;
+        };
 
         auto finalizeFamily = [&]() {
             if (familyItem != nullptr && !currentFamilyEntityIndexes.isEmpty()) {
                 double geometryLength = 0.0;
-                double portLength = 0.0;
+                double bridgeLength = 0.0;
                 for (int entityIndex : currentFamilyEntityIndexes) {
                     if (entityIndex >= 0 && entityIndex < m_geometryModel.dxfDocument.entities.size()) {
                         geometryLength += entityLengthMm(m_geometryModel.dxfDocument.entities.at(entityIndex));
                     }
                 }
-                for (int portIndex : currentFamilyPortIndexes) {
-                    if (portIndex >= 0 && portIndex < m_geometryModel.detectedPorts.size()) {
-                        portLength += m_geometryModel.detectedPorts.at(portIndex).lengthMm;
+                for (int bridgeIndex : currentFamilyBridgeIndexes) {
+                    if (bridgeIndex >= 0 && bridgeIndex < m_geometryModel.detectedBridges.size()) {
+                        bridgeLength += m_geometryModel.detectedBridges.at(bridgeIndex).lengthMm;
                     }
                 }
                 familyItem->setText(1,
-                                    QStringLiteral("%1 entities | %2 ports | %3 mm")
+                                    tr("%1 entities | %2 bridges | %3 mm")
                                         .arg(currentFamilyEntityIndexes.size())
-                                        .arg(currentFamilyPortIndexes.size())
-                                        .arg(QString::number(geometryLength + portLength, 'f', 3)));
+                                        .arg(currentFamilyBridgeIndexes.size())
+                                        .arg(QString::number(geometryLength + bridgeLength, 'f', 3)));
+                const QVariant angleData = familyItem->data(0, BladeTreeFamilyAngleRole);
+                if (angleData.isValid()) {
+                    const double familyAngleDeg = angleData.toDouble();
+                    if (qAbs(familyAngleDeg) > 1e-6) {
+                        familyItem->setText(1,
+                                            tr("%1 entities | %2 bridges | %3 mm | α %4 deg")
+                                                .arg(currentFamilyEntityIndexes.size())
+                                                .arg(currentFamilyBridgeIndexes.size())
+                                                .arg(QString::number(geometryLength + bridgeLength, 'f', 3))
+                                                .arg(QString::number(familyAngleDeg, 'f', 2)));
+                    }
+                }
                 familyItem->setData(0, BladeTreeItemTypeRole, BladeTreeItemTypeFamily);
                 familyItem->setData(0, BladeTreePathIndexRole, pathIndex);
                 familyItem->setData(0, BladeTreeEntityIdsRole, intListToStringList(currentFamilyEntityIndexes));
-                familyItem->setData(0, BladeTreePortIndexesRole, intListToStringList(currentFamilyPortIndexes));
+                familyItem->setData(0, BladeTreeBridgeIndexesRole, intListToStringList(currentFamilyBridgeIndexes));
             }
-            appendFamilyDetails(familyPropertiesItem, currentFamilyEntityIndexes, currentFamilyPortIndexes);
+            appendFamilyDetails(familyPropertiesItem, currentFamilyEntityIndexes, currentFamilyBridgeIndexes);
+            QPointF computedEntryTangent;
+            QPointF computedExitTangent;
+            if (familyBoundaryTangents(currentFamilyEntityIndexes, &computedEntryTangent, &computedExitTangent)) {
+                previousFamilyHasExitTangent = true;
+                previousFamilyExitTangent = computedExitTangent;
+            } else if (currentFamilyHasTangents) {
+                previousFamilyHasExitTangent = true;
+                previousFamilyExitTangent = currentFamilyExitTangent;
+            }
             currentFamilyEntityIndexes.clear();
-            currentFamilyPortIndexes.clear();
+            currentFamilyBridgeIndexes.clear();
+            currentFamilyHasTangents = false;
+            currentFamilyEntryTangent = {};
+            currentFamilyExitTangent = {};
         };
 
-        auto ensureFamilyItem = [&](int resolvedIndex) {
+        auto ensureFamilyItem = [&](int resolvedIndex, int ruleProfileIndex) {
             if (resolvedIndex < 0 || resolvedIndex >= m_geometryModel.dxfDocument.entities.size()) {
                 finalizeFamily();
                 familyItem = nullptr;
@@ -3964,20 +5218,187 @@ void MainWindow::populateEntityProperties()
 
             if (sameFamilyAsPrevious) {
                 currentFamilyEntityIndexes.append(resolvedIndex);
+                if (ruleProfileIndex >= 0 && ruleProfileIndex < directedInfos.size()) {
+                    QPointF entryTangent;
+                    QPointF exitTangent;
+                    if (directedTangentsForEntity(currentEntity,
+                                                  directedInfos.at(ruleProfileIndex).pathStartPoint,
+                                                  directedInfos.at(ruleProfileIndex).pathEndPoint,
+                                                  &entryTangent,
+                                                  &exitTangent)) {
+                        currentFamilyHasTangents = true;
+                        currentFamilyExitTangent = exitTangent;
+                    }
+                }
                 return;
             }
 
             finalizeFamily();
             ++familyCount;
+            const int familyIndex = familyCount - 1;
+            while (m_projectDocument.ruleProfileSegmentOptions[pathIndex].size() <= familyIndex) {
+                m_projectDocument.ruleProfileSegmentOptions[pathIndex].append(RuleProfileSegmentOptions());
+            }
+            RuleProfileSegmentOptions &segmentOptions =
+                m_projectDocument.ruleProfileSegmentOptions[pathIndex][familyIndex];
+
             familyItem = new QTreeWidgetItem(headerItem);
             familyItem->setText(0, currentEntity.type == DxfEntityType::Arc
                                        ? QStringLiteral("Arc segment %1").arg(familyCount)
                                        : QStringLiteral("Line segment %1").arg(familyCount));
             familyItem->setText(1, QStringLiteral("..."));
+            familyItem->setData(0, BladeTreeFamilyIndexRole, familyIndex);
+
+            bool hasAngle = false;
+            double angleDeg = 0.0;
+            QPointF entryTangent;
+            QPointF exitTangent;
+            if (ruleProfileIndex >= 0 && ruleProfileIndex < directedInfos.size()
+                && directedTangentsForEntity(currentEntity,
+                                             directedInfos.at(ruleProfileIndex).pathStartPoint,
+                                             directedInfos.at(ruleProfileIndex).pathEndPoint,
+                                             &entryTangent,
+                                             &exitTangent)) {
+                currentFamilyHasTangents = true;
+                currentFamilyEntryTangent = entryTangent;
+                currentFamilyExitTangent = exitTangent;
+                if (previousFamilyHasExitTangent) {
+                    hasAngle = true;
+                    angleDeg = signedTurnDegrees(previousFamilyExitTangent, currentFamilyEntryTangent);
+                }
+            }
+            familyItem->setData(0, BladeTreeFamilyAngleRole, hasAngle ? angleDeg : 0.0);
+
+            if (!hasAngle && !qFuzzyCompare(segmentOptions.angleCorrectionDeg + 1.0, 1.0)) {
+                segmentOptions.angleCorrectionDeg = 0.0;
+            }
+
+            auto *angleItem = new QTreeWidgetItem(familyItem);
+            angleItem->setText(0, QStringLiteral("Angle"));
+            angleItem->setText(1, hasAngle
+                                      ? QStringLiteral("%1 deg").arg(QString::number(angleDeg, 'f', 2))
+                                      : QStringLiteral("-"));
+
+            auto *angleCorrectionItem = new QTreeWidgetItem(familyItem);
+            angleCorrectionItem->setText(0, QStringLiteral("Angle correction"));
+            angleCorrectionItem->setData(0, BladeTreeOptionKeyRole, QString::fromLatin1(RuleProfileSegmentAngleCorrectionKey));
+            angleCorrectionItem->setData(0, BladeTreePathIndexRole, pathIndex);
+            angleCorrectionItem->setData(0, BladeTreeFamilyIndexRole, familyIndex);
+            auto *angleCorrectionSpin = new QDoubleSpinBox(ui->bladeLinePropertiesTree);
+            angleCorrectionSpin->setDecimals(2);
+            angleCorrectionSpin->setSingleStep(0.10);
+            angleCorrectionSpin->setRange(-100000.0, 100000.0);
+            const double clampedAngleCorrection = hasAngle
+                                                      ? qMax(-qAbs(angleDeg), segmentOptions.angleCorrectionDeg)
+                                                      : 0.0;
+            if (!qFuzzyCompare(segmentOptions.angleCorrectionDeg + 1.0, clampedAngleCorrection + 1.0)) {
+                segmentOptions.angleCorrectionDeg = clampedAngleCorrection;
+            }
+            angleCorrectionSpin->setValue(clampedAngleCorrection);
+            angleCorrectionSpin->setEnabled(hasAngle);
+            ui->bladeLinePropertiesTree->setItemWidget(angleCorrectionItem, 1, angleCorrectionSpin);
+            applyOptionRowHighlight(angleCorrectionItem,
+                                    angleCorrectionSpin,
+                                    !qFuzzyCompare(clampedAngleCorrection + 1.0, 1.0));
+            connect(angleCorrectionSpin, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
+                    [this,
+                     pathIndex,
+                     familyIndex,
+                     angleDeg,
+                     angleCorrectionItem,
+                     angleCorrectionSpin,
+                     applyOptionRowHighlight](double value) {
+                        if (pathIndex < 0 || pathIndex >= m_projectDocument.ruleProfileSegmentOptions.size()
+                            || familyIndex < 0
+                            || familyIndex >= m_projectDocument.ruleProfileSegmentOptions[pathIndex].size()) {
+                            return;
+                        }
+                        const double correctedValue = qMax(-qAbs(angleDeg), value);
+                        if (!qFuzzyCompare(correctedValue + 1.0, value + 1.0)) {
+                            const QSignalBlocker blocker(angleCorrectionSpin);
+                            angleCorrectionSpin->setValue(correctedValue);
+                        }
+                        m_projectDocument.ruleProfileSegmentOptions[pathIndex][familyIndex].angleCorrectionDeg = correctedValue;
+                        applyOptionRowHighlight(angleCorrectionItem,
+                                                angleCorrectionSpin,
+                                                !qFuzzyCompare(correctedValue + 1.0, 1.0));
+                        updateProjectSummary();
+                        statusBar()->showMessage(QStringLiteral("Segment angle correction updated"), 2000);
+                    });
+
+            auto *lengthCorrectionItem = new QTreeWidgetItem(familyItem);
+            lengthCorrectionItem->setText(0, QStringLiteral("Length correction"));
+            lengthCorrectionItem->setData(0, BladeTreeOptionKeyRole, QString::fromLatin1(RuleProfileSegmentLengthCorrectionKey));
+            lengthCorrectionItem->setData(0, BladeTreePathIndexRole, pathIndex);
+            lengthCorrectionItem->setData(0, BladeTreeFamilyIndexRole, familyIndex);
+            auto *lengthCorrectionSpin = new QDoubleSpinBox(ui->bladeLinePropertiesTree);
+            lengthCorrectionSpin->setDecimals(2);
+            lengthCorrectionSpin->setRange(-100000.0, 100000.0);
+            lengthCorrectionSpin->setSingleStep(0.10);
+            lengthCorrectionSpin->setValue(segmentOptions.lengthCorrectionMm);
+            ui->bladeLinePropertiesTree->setItemWidget(lengthCorrectionItem, 1, lengthCorrectionSpin);
+            applyOptionRowHighlight(lengthCorrectionItem,
+                                    lengthCorrectionSpin,
+                                    !qFuzzyCompare(segmentOptions.lengthCorrectionMm + 1.0, 1.0));
+            connect(lengthCorrectionSpin, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
+                    [this,
+                     pathIndex,
+                     familyIndex,
+                     lengthCorrectionItem,
+                     lengthCorrectionSpin,
+                     applyOptionRowHighlight](double value) {
+                        if (pathIndex < 0 || pathIndex >= m_projectDocument.ruleProfileSegmentOptions.size()
+                            || familyIndex < 0
+                            || familyIndex >= m_projectDocument.ruleProfileSegmentOptions[pathIndex].size()) {
+                            return;
+                        }
+                        m_projectDocument.ruleProfileSegmentOptions[pathIndex][familyIndex].lengthCorrectionMm = value;
+                        applyOptionRowHighlight(lengthCorrectionItem,
+                                                lengthCorrectionSpin,
+                                                !qFuzzyCompare(value + 1.0, 1.0));
+                        updateProjectSummary();
+                        statusBar()->showMessage(QStringLiteral("Segment length correction updated"), 2000);
+                    });
+
+            if (currentEntity.type == DxfEntityType::Arc) {
+                auto *openItem = new QTreeWidgetItem(familyItem);
+                openItem->setText(0, QStringLiteral("Open"));
+                openItem->setData(0, BladeTreeOptionKeyRole, QString::fromLatin1(RuleProfileSegmentOpenModeKey));
+                openItem->setData(0, BladeTreePathIndexRole, pathIndex);
+                openItem->setData(0, BladeTreeFamilyIndexRole, familyIndex);
+                auto *openCombo = new QComboBox(ui->bladeLinePropertiesTree);
+                openCombo->addItems(arcOpenModeOptions());
+                const int openIndex = qMax(0, openCombo->findText(segmentOptions.openMode));
+                openCombo->setCurrentIndex(openIndex);
+                ui->bladeLinePropertiesTree->setItemWidget(openItem, 1, openCombo);
+                applyOptionRowHighlight(openItem,
+                                        openCombo,
+                                        segmentOptions.openMode != QStringLiteral("Normal"));
+                connect(openCombo, &QComboBox::currentTextChanged, this,
+                        [this,
+                         pathIndex,
+                         familyIndex,
+                         openItem,
+                         openCombo,
+                         applyOptionRowHighlight](const QString &value) {
+                            if (pathIndex < 0 || pathIndex >= m_projectDocument.ruleProfileSegmentOptions.size()
+                                || familyIndex < 0
+                                || familyIndex >= m_projectDocument.ruleProfileSegmentOptions[pathIndex].size()) {
+                                return;
+                            }
+                            m_projectDocument.ruleProfileSegmentOptions[pathIndex][familyIndex].openMode = value;
+                            applyOptionRowHighlight(openItem,
+                                                    openCombo,
+                                                    value != QStringLiteral("Normal"));
+                            updateProjectSummary();
+                            statusBar()->showMessage(QStringLiteral("Arc open mode updated"), 2000);
+                        });
+            }
+
             familyPropertiesItem = new QTreeWidgetItem(familyItem);
             familyPropertiesItem->setText(0, QStringLiteral("Properties"));
             currentFamilyEntityIndexes = {resolvedIndex};
-            currentFamilyPortIndexes.clear();
+            currentFamilyBridgeIndexes.clear();
         };
 
         for (int ruleProfileIndex = 0; ruleProfileIndex < ruleProfile.size(); ++ruleProfileIndex) {
@@ -3995,26 +5416,26 @@ void MainWindow::populateEntityProperties()
                 valueText = QStringLiteral("%1 | missing").arg(entityId);
             }
 
-            ensureFamilyItem(resolvedIndex);
+            ensureFamilyItem(resolvedIndex, ruleProfileIndex);
             QTreeWidgetItem *segmentParent = familyItem != nullptr ? familyItem : headerItem;
 
             if (ruleProfileIndex > 0) {
                 const int previousIndex = findEntityIndexById(ruleProfile.at(ruleProfileIndex - 1));
-                const int portIndex = findPortIndexForEntities(m_geometryModel.detectedPorts,
-                                                               previousIndex,
-                                                               resolvedIndex);
-                if (portIndex >= 0 && portIndex < m_geometryModel.detectedPorts.size()) {
-                    const DetectedPort &port = m_geometryModel.detectedPorts.at(portIndex);
-                    if (!currentFamilyPortIndexes.contains(portIndex)) {
-                        currentFamilyPortIndexes.append(portIndex);
+                const int bridgeIndex = findBridgeIndexForEntities(m_geometryModel.detectedBridges,
+                                                                   previousIndex,
+                                                                   resolvedIndex);
+                if (bridgeIndex >= 0 && bridgeIndex < m_geometryModel.detectedBridges.size()) {
+                    const DetectedBridge &bridge = m_geometryModel.detectedBridges.at(bridgeIndex);
+                    if (!currentFamilyBridgeIndexes.contains(bridgeIndex)) {
+                        currentFamilyBridgeIndexes.append(bridgeIndex);
                     }
-                    auto *portItem = new QTreeWidgetItem(segmentParent);
-                    portItem->setData(0, BladeTreeItemTypeRole, BladeTreeItemTypePort);
-                    portItem->setData(0, BladeTreePathIndexRole, pathIndex);
-                    portItem->setData(0, BladeTreePortIndexRole, portIndex);
-                    portItem->setText(0, QStringLiteral("Port %1").arg(ruleProfileIndex));
-                    portItem->setText(1, QStringLiteral("%1 mm").arg(QString::number(port.lengthMm, 'f', 3)));
-                    appendPortDetails(portItem, port);
+                    auto *bridgeItem = new QTreeWidgetItem(segmentParent);
+                    bridgeItem->setData(0, BladeTreeItemTypeRole, BladeTreeItemTypeBridge);
+                    bridgeItem->setData(0, BladeTreePathIndexRole, pathIndex);
+                    bridgeItem->setData(0, BladeTreeBridgeIndexRole, bridgeIndex);
+                    bridgeItem->setText(0, tr("Bridge %1").arg(ruleProfileIndex));
+                    bridgeItem->setText(1, QStringLiteral("%1 mm").arg(QString::number(bridge.lengthMm, 'f', 3)));
+                    appendBridgeDetails(bridgeItem, bridge);
                 }
             }
 
@@ -4058,7 +5479,7 @@ void MainWindow::populateEntityProperties()
                 continue;
             }
 
-            if (entitiesConnectedAtAnyEndpoint(m_geometryModel.detectedPorts,
+            if (entitiesConnectedAtAnyEndpoint(m_geometryModel.detectedBridges,
                                                previousIndex,
                                                previousInfo,
                                                currentIndex,
@@ -4098,7 +5519,7 @@ void MainWindow::populateEntityProperties()
         {QStringLiteral("Path count"), QString::number(totalSegmentCount)},
         {QStringLiteral("Resolved entities"), QStringLiteral("%1 / %2").arg(resolvedCount).arg(totalSegmentCount)},
         {QStringLiteral("Continuity"), continuityText},
-        {QStringLiteral("Detected ports"), QString::number(m_geometryModel.detectedPorts.size())},
+        {tr("Detected bridges"), QString::number(m_geometryModel.detectedBridges.size())},
         {QStringLiteral("Modifiers"), QStringLiteral("%1").arg(m_projectDocument.modifiers.size())},
         {QStringLiteral("Source DXF"), m_projectDocument.dxfFilePath}
     };
@@ -4110,6 +5531,7 @@ void MainWindow::populateEntityProperties()
     }
 
     restoreExpandedTreeKeys(ui->bladeLinePropertiesTree, expandedKeys);
+    m_isPopulatingRuleProfileTree = false;
 }
 
 void MainWindow::updateProjectSummary()
@@ -4120,20 +5542,20 @@ void MainWindow::updateProjectSummary()
                                   ? m_projectDocument.dxfFilePath
                                   : QStringLiteral("No DXF loaded"));
     ui->summaryValue->setText(
-        QStringLiteral("Entities: %1 | Layers: %2 | Ports: %3 | RuleProfiles: %4 | Undo commands: %5")
+        tr("Entities: %1 | Layers: %2 | Bridges: %3 | RuleProfiles: %4 | Undo commands: %5")
             .arg(m_geometryModel.dxfDocument.entities.size())
             .arg(m_geometryModel.dxfDocument.layers.size())
-            .arg(m_geometryModel.detectedPorts.size())
+            .arg(m_geometryModel.detectedBridges.size())
             .arg(m_projectDocument.ruleProfiles.size())
             .arg(m_undoStack->count()));
 }
 
-void MainWindow::recomputeDetectedPorts()
+void MainWindow::recomputeDetectedBridges()
 {
-    const double minGap = qMax(0.0, m_appSettings.portMinLengthMm);
-    const double maxGap = qMax(minGap, m_appSettings.portMaxLengthMm);
+    const double minGap = qMax(0.0, m_appSettings.bridgeMinLengthMm);
+    const double maxGap = qMax(minGap, m_appSettings.bridgeMaxLengthMm);
     const double tolerance = qMax(0.05, m_appSettings.defaultToleranceMm);
-    m_geometryModel.detectedPorts = detectPorts(m_geometryModel.dxfDocument,
+    m_geometryModel.detectedBridges = detectBridges(m_geometryModel.dxfDocument,
                                                 minGap,
                                                 maxGap,
                                                 tolerance);

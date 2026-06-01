@@ -5,16 +5,16 @@
 
 #include <QList>
 
-enum class DetectedPortType
+enum class DetectedBridgeType
 {
     Line,
     Arc
 };
 
-class DetectedPort
+class DetectedBridge
 {
 public:
-    DetectedPortType type = DetectedPortType::Line;
+    DetectedBridgeType type = DetectedBridgeType::Line;
     QPointF startPoint;
     QPointF endPoint;
     QPointF center;
@@ -29,7 +29,7 @@ class GeometryModel
 {
 public:
     DxfDocument dxfDocument;
-    QList<DetectedPort> detectedPorts;
+    QList<DetectedBridge> detectedBridges;
 };
 
 #endif // FOXBENDER_GEOMETRYMODEL_H

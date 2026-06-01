@@ -94,6 +94,13 @@ target_include_directories(FoxBender PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 target_link_libraries(FoxBender PRIVATE Qt${QT_VERSION_MAJOR}::Widgets dxfrw_vendor)
 
+if(QT_VERSION_MAJOR EQUAL 6)
+    qt_add_translations(FoxBender
+        TS_FILES
+            i18n/FoxBender_fi.ts
+    )
+endif()
+
 # Qt for iOS sets MACOSX_BUNDLE_GUI_IDENTIFIER automatically since Qt 6.1.
 # If you are developing for iOS or macOS you should consider setting an
 # explicit, fixed bundle identifier manually though.

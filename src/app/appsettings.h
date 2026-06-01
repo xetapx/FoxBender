@@ -8,14 +8,54 @@
 #include <QList>
 #include <QStringList>
 
+class AngleBendTableRow
+{
+public:
+    double angleDeg = 0.0;
+    double left = 0.0;
+    double right = 0.0;
+    double startCorrection = 0.0;
+    double endCorrection = 0.0;
+
+    QJsonObject toJson() const;
+    static AngleBendTableRow fromJson(const QJsonObject &json);
+};
+
+class ArcBendTableRow
+{
+public:
+    double radiusMm = 0.0;
+    int hits = 0;
+    double right90 = 0.0;
+    double right45 = 0.0;
+    double left90 = 0.0;
+    double left45 = 0.0;
+    double startCorrection = 0.0;
+    double endCorrection = 0.0;
+    double bridgeReduction = 0.0;
+
+    QJsonObject toJson() const;
+    static ArcBendTableRow fromJson(const QJsonObject &json);
+};
+
 class AppSettings
 {
 public:
+    static constexpr double DefaultArcHitAngleDeg = 1.45;
+
     QList<ToolStation> toolStations = ToolStation::createDefaultStations();
+    QList<AngleBendTableRow> angleBendTable = createDefaultAngleBendTable();
+    QList<ArcBendTableRow> arcBendTable = createDefaultArcBendTable();
     double defaultToleranceMm = 0.1;
+    QString mainWindowGeometry;
+    QString mainWindowState;
+    QString layerTreeHeaderState;
+    QString entityPropertiesHeaderState;
+    QString ruleProfileTreeHeaderState;
     QStringList recentDxfFiles;
     QStringList recentProjects;
     QString lastDxfDirectory;
+    QString lastBendParametersFilePath;
     QStringList hiddenLayers;
     QColor viewBackgroundColor = QColor(245, 245, 245);
     QColor selectedEntityColor = QColor(220, 40, 40);
@@ -31,13 +71,15 @@ public:
     QColor breakPreviewColor = QColor(0, 120, 255);
     QColor startFlagColor = QColor(0, 170, 110);
     QColor endFlagColor = QColor(255, 140, 0);
-    QColor portColor = QColor(230, 40, 140);
+    QColor bridgeColor = QColor(230, 40, 140);
     bool fillFlags = true;
     double flagScale = 1.0;
     double handleScale = 1.0;
-    double portMinLengthMm = 2.0;
-    double portMaxLengthMm = 6.0;
+    double bridgeMinLengthMm = 2.0;
+    double bridgeMaxLengthMm = 6.0;
 
+    static QList<AngleBendTableRow> createDefaultAngleBendTable();
+    static QList<ArcBendTableRow> createDefaultArcBendTable();
     QJsonObject toJson() const;
     static AppSettings fromJson(const QJsonObject &json);
 };

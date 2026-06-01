@@ -224,6 +224,28 @@ bool isLayerVisible(const DxfDocument &document, const QString &layerName)
     return true;
 }
 
+bool isNearBlack(const QColor &color)
+{
+    return color.red() <= 16 && color.green() <= 16 && color.blue() <= 16;
+}
+
+bool isNearWhite(const QColor &color)
+{
+    return color.red() >= 239 && color.green() >= 239 && color.blue() >= 239;
+}
+
+QColor displayColorForBackground(const QColor &sourceColor, const QColor &backgroundColor)
+{
+    const bool darkBackground = qGray(backgroundColor.rgb()) < 128;
+    if (darkBackground && isNearBlack(sourceColor)) {
+        return QColor(Qt::white);
+    }
+    if (!darkBackground && isNearWhite(sourceColor)) {
+        return QColor(Qt::black);
+    }
+    return sourceColor;
+}
+
 class SelectableLineItem final : public QGraphicsLineItem
 {
 public:
@@ -397,6 +419,18 @@ void DxfViewWidget::setCandidateEntityIndexes(const QList<int> &entityIndexes)
     }
 }
 
+void DxfViewWidget::setModifiedSegmentEntityIndexes(const QList<int> &entityIndexes)
+{
+    m_modifiedSegmentEntityIndexes = entityIndexes;
+
+    const QList<QGraphicsItem *> items = m_scene->items();
+    for (QGraphicsItem *item : items) {
+        if (item->data(EntityIndexRole).isValid()) {
+            updateItemSelectionStyle(item);
+        }
+    }
+}
+
 void DxfViewWidget::setTreeSelectionEntityIndexes(const QList<int> &entityIndexes)
 {
     m_treeSelectionEntityIndexes = entityIndexes;
@@ -409,18 +443,18 @@ void DxfViewWidget::setTreeSelectionEntityIndexes(const QList<int> &entityIndexe
     }
 }
 
-void DxfViewWidget::setHighlightedPortIndexes(const QList<int> &portIndexes)
+void DxfViewWidget::setHighlightedBridgeIndexes(const QList<int> &bridgeIndexes)
 {
-    m_highlightedPortIndexes = portIndexes;
-    clearPortItems();
-    renderDetectedPorts();
+    m_highlightedBridgeIndexes = bridgeIndexes;
+    clearBridgeItems();
+    renderDetectedBridges();
 }
 
-void DxfViewWidget::setTreeSelectionPortIndexes(const QList<int> &portIndexes)
+void DxfViewWidget::setTreeSelectionBridgeIndexes(const QList<int> &bridgeIndexes)
 {
-    m_treeSelectionPortIndexes = portIndexes;
-    clearPortItems();
-    renderDetectedPorts();
+    m_treeSelectionBridgeIndexes = bridgeIndexes;
+    clearBridgeItems();
+    renderDetectedBridges();
 }
 
 void DxfViewWidget::setHoveredCandidateEntityIndexes(const QList<int> &entityIndexes)
@@ -435,11 +469,11 @@ void DxfViewWidget::setHoveredCandidateEntityIndexes(const QList<int> &entityInd
     }
 }
 
-void DxfViewWidget::setHoveredPortIndexes(const QList<int> &portIndexes)
+void DxfViewWidget::setHoveredBridgeIndexes(const QList<int> &bridgeIndexes)
 {
-    m_hoveredPortIndexes = portIndexes;
-    clearPortItems();
-    renderDetectedPorts();
+    m_hoveredBridgeIndexes = bridgeIndexes;
+    clearBridgeItems();
+    renderDetectedBridges();
 }
 
 void DxfViewWidget::setRuleProfileGuide(const QPointF &startPoint,
@@ -458,11 +492,11 @@ void DxfViewWidget::setRuleProfileGuide(const QPointF &startPoint,
     renderRuleProfileGuide();
 }
 
-void DxfViewWidget::setDetectedPorts(const QList<DetectedPort> &ports)
+void DxfViewWidget::setDetectedBridges(const QList<DetectedBridge> &bridges)
 {
-    m_detectedPorts = ports;
-    clearPortItems();
-    renderDetectedPorts();
+    m_detectedBridges = bridges;
+    clearBridgeItems();
+    renderDetectedBridges();
 }
 
 void DxfViewWidget::setViewColors(const ViewColors &colors)
@@ -479,8 +513,8 @@ void DxfViewWidget::setViewColors(const ViewColors &colors)
 
     clearRuleProfileGuide();
     renderRuleProfileGuide();
-    clearPortItems();
-    renderDetectedPorts();
+    clearBridgeItems();
+    renderDetectedBridges();
 }
 
 void DxfViewWidget::setBreakPreviewEnabled(bool enabled)
@@ -814,7 +848,7 @@ void DxfViewWidget::renderDocument(bool fitView)
     m_scene->clear();
     m_handleItems.clear();
     m_ruleProfileGuideItems.clear();
-    m_portItems.clear();
+    m_bridgeItems.clear();
     m_snapPreviewItem = nullptr;
     m_breakPreviewItem = nullptr;
 
@@ -844,7 +878,8 @@ void DxfViewWidget::renderDocument(bool fitView)
         if (!isLayerVisible(m_document, entity.layerName)) {
             continue;
         }
-        const QPen pen(entity.color, 0.0);
+        const QColor displayColor = displayColorForBackground(entity.color, m_viewColors.backgroundColor);
+        const QPen pen(displayColor, 0.0);
         QGraphicsItem *graphicsItem = nullptr;
 
         switch (entity.type) {
@@ -883,12 +918,12 @@ void DxfViewWidget::renderDocument(bool fitView)
         if (graphicsItem != nullptr) {
             graphicsItem->setFlag(QGraphicsItem::ItemIsSelectable, true);
             graphicsItem->setData(EntityIndexRole, entityIndex);
-            graphicsItem->setData(EntityColorRole, entity.color);
+            graphicsItem->setData(EntityColorRole, displayColor);
             updateItemSelectionStyle(graphicsItem);
         }
     }
 
-    renderDetectedPorts();
+    renderDetectedBridges();
 
     auto *label = m_scene->addSimpleText(QStringLiteral("%1 | %2 entities | %3 layers")
                                              .arg(m_document.sourceName)
@@ -913,6 +948,7 @@ void DxfViewWidget::updateItemSelectionStyle(QGraphicsItem *item)
     const bool isRuleProfileEntity = m_ruleProfileEntityIndexes.contains(entityIndex);
     const bool isActiveRuleProfileEntity = m_activeRuleProfileEntityIndexes.contains(entityIndex);
     const bool isCandidateEntity = m_candidateEntityIndexes.contains(entityIndex);
+    const bool isModifiedSegmentEntity = m_modifiedSegmentEntityIndexes.contains(entityIndex);
     const bool isTreeSelectedEntity = m_treeSelectionEntityIndexes.contains(entityIndex);
     const bool isHoveredCandidateEntity = m_hoveredCandidateEntityIndexes.contains(entityIndex);
     const bool isArmed = entityIndex == m_armedEntityIndex;
@@ -920,6 +956,7 @@ void DxfViewWidget::updateItemSelectionStyle(QGraphicsItem *item)
     const QColor activeColor = item->isSelected()
                                    ? m_viewColors.selectedEntityColor
                                    : isTreeSelectedEntity ? m_viewColors.segmentSelectionColor
+                                   : isModifiedSegmentEntity ? m_viewColors.segmentSelectionColor
                                    : isArmed ? m_viewColors.armedEntityColor
                                    : isHoveredCandidateEntity ? m_viewColors.hoverEntityColor
                                    : isCandidateEntity ? m_viewColors.armedEntityColor
@@ -929,6 +966,7 @@ void DxfViewWidget::updateItemSelectionStyle(QGraphicsItem *item)
                                                : baseColor;
     const qreal width = item->isSelected() ? 1.8
                         : isTreeSelectedEntity ? 2.6
+                        : isModifiedSegmentEntity ? 2.0
                         : isArmed ? 1.4
                         : isHoveredCandidateEntity ? 1.8
                         : isCandidateEntity ? 1.4
@@ -1143,15 +1181,15 @@ void DxfViewWidget::clearRuleProfileGuide()
     m_ruleProfileGuideItems.clear();
 }
 
-void DxfViewWidget::clearPortItems()
+void DxfViewWidget::clearBridgeItems()
 {
-    for (QGraphicsItem *item : std::as_const(m_portItems)) {
+    for (QGraphicsItem *item : std::as_const(m_bridgeItems)) {
         if (item != nullptr) {
             m_scene->removeItem(item);
             delete item;
         }
     }
-    m_portItems.clear();
+    m_bridgeItems.clear();
 }
 
 void DxfViewWidget::renderRuleProfileGuide()
@@ -1266,52 +1304,52 @@ void DxfViewWidget::renderRuleProfileGuide()
     }
 }
 
-void DxfViewWidget::renderDetectedPorts()
+void DxfViewWidget::renderDetectedBridges()
 {
     if (m_scene == nullptr) {
         return;
     }
 
-    for (int portIndex = 0; portIndex < m_detectedPorts.size(); ++portIndex) {
-        const DetectedPort &port = m_detectedPorts.at(portIndex);
-        bool portVisible = true;
-        for (int entityIndex : port.relatedEntityIndexes) {
+    for (int bridgeIndex = 0; bridgeIndex < m_detectedBridges.size(); ++bridgeIndex) {
+        const DetectedBridge &bridge = m_detectedBridges.at(bridgeIndex);
+        bool bridgeVisible = true;
+        for (int entityIndex : bridge.relatedEntityIndexes) {
             if (entityIndex >= 0 && entityIndex < m_document.entities.size()) {
                 const DxfEntity &relatedEntity = m_document.entities.at(entityIndex);
                 if (!isLayerVisible(m_document, relatedEntity.layerName)) {
-                    portVisible = false;
+                    bridgeVisible = false;
                     break;
                 }
             }
         }
-        if (!portVisible) {
+        if (!bridgeVisible) {
             continue;
         }
 
-        const bool isTreeSelected = m_treeSelectionPortIndexes.contains(portIndex);
-        const bool isHighlighted = m_highlightedPortIndexes.contains(portIndex);
-        const bool isHovered = m_hoveredPortIndexes.contains(portIndex);
+        const bool isTreeSelected = m_treeSelectionBridgeIndexes.contains(bridgeIndex);
+        const bool isHighlighted = m_highlightedBridgeIndexes.contains(bridgeIndex);
+        const bool isHovered = m_hoveredBridgeIndexes.contains(bridgeIndex);
         const QColor penColor = isTreeSelected
                                     ? (m_treeSelectionEntityIndexes.isEmpty()
                                            ? m_viewColors.selectedEntityColor
                                            : m_viewColors.segmentSelectionColor)
-                                    : m_viewColors.portColor;
+                                    : m_viewColors.bridgeColor;
         QPen pen(penColor,
                  isTreeSelected ? 5.2 : isHovered ? 4.6 : isHighlighted ? 3.6 : 2.2,
                  (isTreeSelected || isHovered || isHighlighted) ? Qt::SolidLine : Qt::DashLine);
         pen.setCosmetic(true);
         QGraphicsItem *item = nullptr;
-        if (port.type == DetectedPortType::Line) {
-            item = m_scene->addLine(QLineF(modelToScenePoint(port.startPoint),
-                                           modelToScenePoint(port.endPoint)),
+        if (bridge.type == DetectedBridgeType::Line) {
+            item = m_scene->addLine(QLineF(modelToScenePoint(bridge.startPoint),
+                                           modelToScenePoint(bridge.endPoint)),
                                     pen);
         } else {
             DxfEntity arcEntity;
             arcEntity.type = DxfEntityType::Arc;
-            arcEntity.center = port.center;
-            arcEntity.radius = port.radius;
-            arcEntity.startAngleDeg = port.startAngleDeg;
-            arcEntity.endAngleDeg = port.endAngleDeg;
+            arcEntity.center = bridge.center;
+            arcEntity.radius = bridge.radius;
+            arcEntity.startAngleDeg = bridge.startAngleDeg;
+            arcEntity.endAngleDeg = bridge.endAngleDeg;
             auto *pathItem = new QGraphicsPathItem(buildArcPath(arcEntity));
             pathItem->setPen(pen);
             m_scene->addItem(pathItem);
@@ -1320,7 +1358,7 @@ void DxfViewWidget::renderDetectedPorts()
 
         if (item != nullptr) {
             item->setZValue(6.0);
-            m_portItems.append(item);
+            m_bridgeItems.append(item);
         }
     }
 }

@@ -8,6 +8,7 @@
 #include "src/io/foxdxfreader.h"
 
 #include <QMainWindow>
+#include <QByteArray>
 
 QT_BEGIN_NAMESPACE
 namespace Ui {
@@ -31,6 +32,10 @@ public:
     explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow() override;
     void applyUndoRedoDocument(const DxfDocument &document);
+    void applyUndoRedoProjectDocument(const ProjectDocument &document);
+
+protected:
+    void closeEvent(QCloseEvent *event) override;
 
 private slots:
     void openDxfFile();
@@ -41,12 +46,15 @@ private slots:
     void removeLastFromRuleProfile();
     void buildRuleProfile();
     void removeActiveRuleProfile();
+    void deleteSelectedEntity();
     void createBreak();
     void createFillet();
+    void joinLinesToIntersection();
     void handleEntityClicked(int entityIndex, const QPointF &scenePos);
     void handleEntityHovered(int entityIndex);
     void handlePointerMoved(const QPointF &scenePos);
     void handleRuleProfileItemClicked(QTreeWidgetItem *item, int column);
+    void handleRuleProfileTreeItemChanged(QTreeWidgetItem *item, int column);
     void cancelActiveTool();
     void handleEntitySelectionChanged(int entityIndex);
     void handleDocumentEdited();
@@ -55,15 +63,23 @@ private slots:
                                      const QString &description);
     void fitDxfToView();
     void handleToolStationCellChanged(int row, int column);
+    void handleAngleBendTableCellChanged(int row, int column);
+    void handleArcBendTableCellChanged(int row, int column);
     void handleFlagScaleChanged(int value);
     void handleHandleScaleChanged(int value);
     void handleFlagFillChanged(bool checked);
-    void handlePortLengthChanged();
+    void handleBridgeLengthChanged();
+    void addAngleBendRow();
+    void addArcBendRow();
+    void openBendParametersFile();
+    void saveBendParametersFile();
+    void saveBendParametersFileAs();
     void acceptHoveredCandidateChain();
     void handleLayerTreeItemChanged(QTreeWidgetItem *item, int column);
     void openRecentDxfAction();
     void openRecentProjectAction();
     void clearUiSelections();
+    void resetDockLayout();
 
 private:
     enum class ToolMode
@@ -82,6 +98,7 @@ private:
     void setupWindow();
     void loadDemoGeometry();
     void populateToolTable();
+    void populateBendTables();
     void populateLayerTree();
     void populateSelectedEntityPropertiesTree();
     void populateEntityProperties();
@@ -97,17 +114,22 @@ private:
     void updateColorButton(QPushButton *button, const QColor &color, const QString &fallbackText);
     void chooseColor(QPushButton *button, QColor *targetColor, const QString &title, const QString &buttonText);
     void updateViewColorUi();
+    void updateBendParametersStatusUi();
     void updateFlagPreview();
     void updateHandlePreview();
-    void recomputeDetectedPorts();
+    void recomputeDetectedBridges();
     bool acceptCandidateChainByEntityIndex(int entityIndex);
     int findEntityIndexById(const QString &entityId) const;
     void updatePendingTrimPreview();
+    bool loadBendParametersFilePath(const QString &filePath);
+    bool saveBendParametersFilePath(const QString &filePath, bool updateCurrentPath = true);
 
     Ui::MainWindow *ui;
     QUndoStack *m_undoStack;
     QLabel *m_statusEntityLabel = nullptr;
     QLabel *m_statusPointerLabel = nullptr;
+    QByteArray m_defaultMainWindowState;
+    QMenu *m_dockingMenu = nullptr;
     QMenu *m_recentDxfFilesMenu = nullptr;
     QMenu *m_recentProjectsMenu = nullptr;
     ProjectDocument m_projectDocument;
@@ -117,6 +139,7 @@ private:
     int m_selectedEntityIndex = -1;
     int m_hoveredEntityIndex = -1;
     QPointF m_lastPointerScenePos;
+    QString m_currentBendParametersFilePath;
     bool m_isApplyingUndoRedo = false;
     ToolMode m_toolMode = ToolMode::None;
     int m_pendingBreakEntity = -1;
@@ -125,6 +148,8 @@ private:
     QStringList m_pendingRuleProfileEntityIds;
     QList<QList<int>> m_candidateChains;
     bool m_isPopulatingToolTable = false;
+    bool m_isPopulatingBendTables = false;
+    bool m_isPopulatingRuleProfileTree = false;
 };
 
 #endif // FOXBENDER_MAINWINDOW_H

@@ -20,4 +20,11 @@ public:
     static bool load(const QString &filePath, AppSettings *settings, QString *errorMessage = nullptr);
 };
 
+class JsonBendParametersStore
+{
+public:
+    static bool save(const QString &filePath, const AppSettings &settings, QString *errorMessage = nullptr);
+    static bool load(const QString &filePath, AppSettings *settings, QString *errorMessage = nullptr);
+};
+
 #endif // FOXBENDER_JSONSTORES_H

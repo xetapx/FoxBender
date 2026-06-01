@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>1360</width>
-    <height>1075</height>
+    <height>823</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -18,11 +18,11 @@
     <item>
      <widget class="QTabWidget" name="mainTabWidget">
       <property name="currentIndex">
-       <number>0</number>
+       <number>1</number>
       </property>
       <widget class="QWidget" name="dxfTab">
        <attribute name="title">
-        <string>DXF / Polku</string>
+        <string>DXF / Path</string>
        </attribute>
        <layout class="QVBoxLayout" name="verticalLayout_2">
         <item>
@@ -103,17 +103,17 @@
       </widget>
       <widget class="QWidget" name="settingsTab">
        <attribute name="title">
-        <string>Asetukset</string>
+        <string>Settings</string>
        </attribute>
        <layout class="QVBoxLayout" name="verticalLayout_3">
         <item>
          <widget class="QTabWidget" name="settingsTabWidget">
           <property name="currentIndex">
-           <number>1</number>
+           <number>2</number>
           </property>
           <widget class="QWidget" name="toolSettingsTab">
            <attribute name="title">
-            <string>Työkalut</string>
+            <string>Tools</string>
            </attribute>
            <layout class="QVBoxLayout" name="verticalLayout_12">
             <item>
@@ -171,7 +171,7 @@
           </widget>
           <widget class="QWidget" name="colorSettingsTab">
            <attribute name="title">
-            <string>Värit</string>
+            <string>Colors</string>
            </attribute>
            <layout class="QVBoxLayout" name="verticalLayout_13">
             <item>
@@ -179,176 +179,184 @@
               <property name="title">
                <string>View Colors</string>
               </property>
-              <layout class="QGridLayout" name="gridLayout_2">
-               <item row="0" column="0">
-               <widget class="QLabel" name="labelSelectedEntityColor">
-                <property name="text">
-                  <string>Entity selection</string>
-                 </property>
-                </widget>
+              <layout class="QHBoxLayout" name="horizontalLayout_9">
+               <item>
+                <layout class="QVBoxLayout" name="verticalLayout_17">
+                 <item>
+                  <widget class="QLabel" name="labelSelectedEntityColor">
+                   <property name="text">
+                    <string>Entity selection</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QLabel" name="labelHoverEntityColor">
+                   <property name="text">
+                    <string>Hover entity</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QLabel" name="labelArmedEntityColor">
+                   <property name="text">
+                    <string>Armed tool entity</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QLabel" name="labelBladeLineColor">
+                   <property name="text">
+                    <string>RuleProfile</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QLabel" name="labelActiveBladeLineColor">
+                   <property name="text">
+                    <string>Active RuleProfile</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QLabel" name="labelHandleColor">
+                   <property name="text">
+                    <string>Handle</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QLabel" name="labelHandleHoverColor">
+                   <property name="text">
+                    <string>Handle hover stroke</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QLabel" name="labelHandleHoverFillColor">
+                   <property name="text">
+                    <string>Handle hover fill</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QLabel" name="labelSnapPreviewColor">
+                   <property name="text">
+                    <string>Snap preview</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QLabel" name="labelBreakPreviewColor">
+                   <property name="text">
+                    <string>Break preview</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QLabel" name="labelViewBackgroundColor">
+                   <property name="text">
+                    <string>View background</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QLabel" name="labelSegmentSelectionColor">
+                   <property name="text">
+                    <string>Segment selection</string>
+                   </property>
+                  </widget>
+                 </item>
+                </layout>
                </item>
-               <item row="8" column="1">
-                <widget class="QPushButton" name="snapPreviewColorButton">
-                 <property name="text">
-                  <string>Choose color</string>
-                 </property>
-                </widget>
+               <item>
+                <layout class="QVBoxLayout" name="verticalLayout_16">
+                 <item>
+                  <widget class="QPushButton" name="selectedEntityColorButton">
+                   <property name="text">
+                    <string>Choose color</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QPushButton" name="hoverEntityColorButton">
+                   <property name="text">
+                    <string>Choose color</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QPushButton" name="armedEntityColorButton">
+                   <property name="text">
+                    <string>Choose color</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QPushButton" name="bladeLineColorButton">
+                   <property name="text">
+                    <string>Choose color</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QPushButton" name="activeBladeLineColorButton">
+                   <property name="text">
+                    <string>Choose color</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QPushButton" name="handleColorButton">
+                   <property name="text">
+                    <string>Choose color</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QPushButton" name="handleHoverColorButton">
+                   <property name="text">
+                    <string>Choose color</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QPushButton" name="handleHoverFillColorButton">
+                   <property name="text">
+                    <string>Choose color</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QPushButton" name="snapPreviewColorButton">
+                   <property name="text">
+                    <string>Choose color</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QPushButton" name="breakPreviewColorButton">
+                   <property name="text">
+                    <string>Choose color</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QPushButton" name="viewBackgroundColorButton">
+                   <property name="text">
+                    <string>Choose color</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QPushButton" name="segmentSelectionColorButton">
+                   <property name="text">
+                    <string>Choose color</string>
+                   </property>
+                  </widget>
+                 </item>
+                </layout>
                </item>
-               <item row="2" column="1">
-                <widget class="QPushButton" name="armedEntityColorButton">
-                 <property name="text">
-                  <string>Choose color</string>
-                 </property>
-                </widget>
-               </item>
-               <item row="2" column="0">
-                <widget class="QLabel" name="labelArmedEntityColor">
-                 <property name="text">
-                  <string>Armed tool entity</string>
-                 </property>
-                </widget>
-               </item>
-               <item row="1" column="1">
-                <widget class="QPushButton" name="hoverEntityColorButton">
-                 <property name="text">
-                  <string>Choose color</string>
-                 </property>
-                </widget>
-               </item>
-               <item row="3" column="0">
-                <widget class="QLabel" name="labelBladeLineColor">
-                 <property name="text">
-                  <string>RuleProfile</string>
-                 </property>
-                </widget>
-               </item>
-               <item row="4" column="0">
-                <widget class="QLabel" name="labelActiveBladeLineColor">
-                 <property name="text">
-                  <string>Active RuleProfile</string>
-                 </property>
-                </widget>
-               </item>
-               <item row="10" column="1">
-                <widget class="QPushButton" name="viewBackgroundColorButton">
-                 <property name="text">
-                  <string>Choose color</string>
-                 </property>
-                </widget>
-               </item>
-               <item row="8" column="0">
-                <widget class="QLabel" name="labelSnapPreviewColor">
-                 <property name="text">
-                  <string>Snap preview</string>
-                 </property>
-                </widget>
-               </item>
-               <item row="7" column="1">
-                <widget class="QPushButton" name="handleHoverFillColorButton">
-                 <property name="text">
-                  <string>Choose color</string>
-                 </property>
-                </widget>
-               </item>
-               <item row="1" column="0">
-                <widget class="QLabel" name="labelHoverEntityColor">
-                 <property name="text">
-                  <string>Hover entity</string>
-                 </property>
-                </widget>
-               </item>
-               <item row="4" column="1">
-                <widget class="QPushButton" name="activeBladeLineColorButton">
-                 <property name="text">
-                  <string>Choose color</string>
-                 </property>
-                </widget>
-               </item>
-               <item row="6" column="1">
-                <widget class="QPushButton" name="handleHoverColorButton">
-                 <property name="text">
-                  <string>Choose color</string>
-                 </property>
-                </widget>
-               </item>
-               <item row="10" column="0">
-                <widget class="QLabel" name="labelViewBackgroundColor">
-                 <property name="text">
-                  <string>View background</string>
-                 </property>
-                </widget>
-               </item>
-               <item row="0" column="1">
-                <widget class="QPushButton" name="selectedEntityColorButton">
-                 <property name="text">
-                  <string>Choose color</string>
-                 </property>
-                </widget>
-               </item>
-               <item row="11" column="0">
-                <widget class="QLabel" name="labelSegmentSelectionColor">
-                 <property name="text">
-                  <string>Segment selection</string>
-                 </property>
-                </widget>
-               </item>
-               <item row="11" column="1">
-                <widget class="QPushButton" name="segmentSelectionColorButton">
-                 <property name="text">
-                  <string>Choose color</string>
-                 </property>
-                </widget>
-               </item>
-               <item row="6" column="0">
-                <widget class="QLabel" name="labelHandleHoverColor">
-                 <property name="text">
-                  <string>Handle hover stroke</string>
-                 </property>
-                </widget>
-               </item>
-               <item row="9" column="0">
-                <widget class="QLabel" name="labelBreakPreviewColor">
-                 <property name="text">
-                  <string>Break preview</string>
-                 </property>
-                </widget>
-               </item>
-               <item row="9" column="1">
-                <widget class="QPushButton" name="breakPreviewColorButton">
-                 <property name="text">
-                  <string>Choose color</string>
-                 </property>
-                </widget>
-               </item>
-               <item row="5" column="1">
-                <widget class="QPushButton" name="handleColorButton">
-                 <property name="text">
-                  <string>Choose color</string>
-                 </property>
-                </widget>
-               </item>
-               <item row="5" column="0">
-                <widget class="QLabel" name="labelHandleColor">
-                 <property name="text">
-                  <string>Handle</string>
-                 </property>
-                </widget>
-               </item>
-               <item row="3" column="1">
-                <widget class="QPushButton" name="bladeLineColorButton">
-                 <property name="text">
-                  <string>Choose color</string>
-                 </property>
-                </widget>
-               </item>
-               <item row="7" column="0">
-                <widget class="QLabel" name="labelHandleHoverFillColor">
-                 <property name="text">
-                  <string>Handle hover fill</string>
-                 </property>
-                </widget>
-               </item>
-               <item row="4" column="2">
+               <item>
                 <spacer name="horizontalSpacer">
                  <property name="orientation">
                   <enum>Qt::Orientation::Horizontal</enum>
@@ -365,138 +373,15 @@
              </widget>
             </item>
             <item>
-             <widget class="QGroupBox" name="flagSettingsGroup">
+             <widget class="QGroupBox" name="bridgeSettingsGroup">
               <property name="title">
-               <string>RuleProfile Flags</string>
-              </property>
-              <layout class="QGridLayout" name="gridLayout_3">
-               <item row="0" column="0">
-                <widget class="QLabel" name="labelStartFlagColor">
-                 <property name="text">
-                  <string>Start flag</string>
-                 </property>
-                </widget>
-               </item>
-               <item row="0" column="1">
-                <widget class="QPushButton" name="startFlagColorButton">
-                 <property name="text">
-                  <string>Choose color</string>
-                 </property>
-                </widget>
-               </item>
-               <item row="1" column="0">
-                <widget class="QLabel" name="labelEndFlagColor">
-                 <property name="text">
-                  <string>End flag</string>
-                 </property>
-                </widget>
-               </item>
-               <item row="1" column="1">
-                <widget class="QPushButton" name="endFlagColorButton">
-                 <property name="text">
-                  <string>Choose color</string>
-                 </property>
-                </widget>
-               </item>
-               <item row="2" column="0">
-                <widget class="QLabel" name="labelFlagScale">
-                 <property name="text">
-                  <string>Flag size</string>
-                 </property>
-                </widget>
-               </item>
-               <item row="2" column="1">
-                <layout class="QHBoxLayout" name="horizontalLayout_2">
-                 <item>
-                  <widget class="QSlider" name="flagScaleSlider">
-                   <property name="minimum">
-                    <number>50</number>
-                   </property>
-                   <property name="maximum">
-                    <number>300</number>
-                   </property>
-                   <property name="singleStep">
-                    <number>5</number>
-                   </property>
-                   <property name="pageStep">
-                    <number>10</number>
-                   </property>
-                   <property name="value">
-                    <number>100</number>
-                   </property>
-                   <property name="orientation">
-                    <enum>Qt::Orientation::Horizontal</enum>
-                   </property>
-                  </widget>
-                 </item>
-                 <item>
-                  <widget class="QLabel" name="flagScaleValueLabel">
-                   <property name="minimumSize">
-                    <size>
-                     <width>48</width>
-                     <height>0</height>
-                    </size>
-                   </property>
-                   <property name="text">
-                    <string>100 %</string>
-                   </property>
-                  </widget>
-                 </item>
-                </layout>
-               </item>
-               <item row="3" column="0">
-                <widget class="QLabel" name="labelFlagFill">
-                 <property name="text">
-                  <string>Fill flags</string>
-                 </property>
-                </widget>
-               </item>
-               <item row="3" column="1">
-                <widget class="QCheckBox" name="fillFlagsCheckBox">
-                 <property name="text">
-                  <string>Filled</string>
-                 </property>
-                 <property name="checked">
-                  <bool>true</bool>
-                 </property>
-                </widget>
-               </item>
-               <item row="4" column="0">
-                <widget class="QLabel" name="labelFlagPreview">
-                 <property name="text">
-                  <string>Preview</string>
-                 </property>
-                </widget>
-               </item>
-               <item row="4" column="1">
-                <widget class="QLabel" name="flagPreviewLabel">
-                 <property name="minimumSize">
-                  <size>
-                   <width>220</width>
-                   <height>120</height>
-                  </size>
-                 </property>
-                 <property name="frameShape">
-                  <enum>QFrame::Shape::StyledPanel</enum>
-                 </property>
-                 <property name="text">
-                  <string/>
-                 </property>
-                </widget>
-               </item>
-              </layout>
-             </widget>
-            </item>
-            <item>
-             <widget class="QGroupBox" name="portSettingsGroup">
-              <property name="title">
-               <string>Port Detection</string>
+               <string>Bridge Detection</string>
               </property>
               <layout class="QGridLayout" name="gridLayout_4">
                <item row="0" column="0">
                 <widget class="QLabel" name="labelPortMinLength">
                  <property name="text">
-                  <string>Min port length</string>
+                  <string>Bridge minimum length</string>
                  </property>
                 </widget>
                </item>
@@ -525,7 +410,7 @@
                <item row="1" column="0">
                 <widget class="QLabel" name="labelPortMaxLength">
                  <property name="text">
-                  <string>Max port length</string>
+                  <string>Bridge maximum length</string>
                  </property>
                 </widget>
                </item>
@@ -554,12 +439,12 @@
                <item row="2" column="0">
                 <widget class="QLabel" name="labelPortColor">
                  <property name="text">
-                  <string>Port highlight</string>
+                  <string>Bridge highlight</string>
                  </property>
                 </widget>
                </item>
                <item row="2" column="1">
-                <widget class="QPushButton" name="portColorButton">
+                <widget class="QPushButton" name="bridgeColorButton">
                  <property name="text">
                   <string>Choose color</string>
                  </property>
@@ -568,83 +453,482 @@
               </layout>
              </widget>
             </item>
+           </layout>
+          </widget>
+          <widget class="QWidget" name="bendTablesTab">
+           <attribute name="title">
+            <string>Bend Tables</string>
+           </attribute>
+           <layout class="QVBoxLayout" name="verticalLayout_19">
             <item>
-             <widget class="QGroupBox" name="handleSettingsGroup">
+             <widget class="QGroupBox" name="bendParametersFileGroup">
               <property name="title">
-               <string>Handle Preview</string>
+               <string>Bend Parameters File</string>
               </property>
-              <layout class="QGridLayout" name="gridLayout_17">
+              <layout class="QGridLayout" name="gridLayout_5">
                <item row="0" column="0">
-                <widget class="QLabel" name="labelHandleScale">
+                <widget class="QLabel" name="labelBendParametersName">
                  <property name="text">
-                  <string>Handle size</string>
+                  <string>File</string>
                  </property>
                 </widget>
                </item>
                <item row="0" column="1">
-                <layout class="QHBoxLayout" name="horizontalLayout_7">
-                 <item>
-                  <widget class="QSlider" name="handleScaleSlider">
-                   <property name="minimum">
-                    <number>50</number>
-                   </property>
-                   <property name="maximum">
-                    <number>300</number>
-                   </property>
-                   <property name="singleStep">
-                    <number>5</number>
-                   </property>
-                   <property name="pageStep">
-                    <number>10</number>
-                   </property>
-                   <property name="value">
-                    <number>100</number>
-                   </property>
-                   <property name="orientation">
-                    <enum>Qt::Orientation::Horizontal</enum>
-                   </property>
-                  </widget>
-                 </item>
-                 <item>
-                  <widget class="QLabel" name="handleScaleValueLabel">
-                   <property name="minimumSize">
-                    <size>
-                     <width>48</width>
-                     <height>0</height>
-                    </size>
-                   </property>
-                   <property name="text">
-                    <string>100 %</string>
-                   </property>
-                  </widget>
-                 </item>
-                </layout>
+                <widget class="QLabel" name="bendParametersNameValue">
+                 <property name="text">
+                  <string>bendparameters.json</string>
+                 </property>
+                </widget>
                </item>
                <item row="1" column="0">
-                <widget class="QLabel" name="labelHandlePreview">
+                <widget class="QLabel" name="labelBendParametersModified">
                  <property name="text">
-                  <string>Preview</string>
+                  <string>Last modified</string>
                  </property>
                 </widget>
                </item>
                <item row="1" column="1">
-                <widget class="QLabel" name="handlePreviewLabel">
-                 <property name="minimumSize">
-                  <size>
-                   <width>220</width>
-                   <height>120</height>
-                  </size>
-                 </property>
-                 <property name="frameShape">
-                  <enum>QFrame::Shape::StyledPanel</enum>
-                 </property>
+                <widget class="QLabel" name="bendParametersModifiedValue">
                  <property name="text">
-                  <string/>
+                  <string>-</string>
                  </property>
+                </widget>
+               </item>
+               <item row="2" column="0" colspan="2">
+                <layout class="QHBoxLayout" name="horizontalLayout_12">
+                 <item>
+                  <widget class="QPushButton" name="openBendParametersButton">
+                   <property name="text">
+                    <string>Open...</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QPushButton" name="saveBendParametersButton">
+                   <property name="text">
+                    <string>Save</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QPushButton" name="saveBendParametersAsButton">
+                   <property name="text">
+                    <string>Save As...</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <spacer name="horizontalSpacer_4">
+                   <property name="orientation">
+                    <enum>Qt::Orientation::Horizontal</enum>
+                   </property>
+                   <property name="sizeHint" stdset="0">
+                    <size>
+                     <width>40</width>
+                     <height>20</height>
+                    </size>
+                   </property>
+                  </spacer>
+                 </item>
+                </layout>
+               </item>
+              </layout>
+             </widget>
+            </item>
+            <item>
+             <widget class="QGroupBox" name="angleBendGroup">
+              <property name="title">
+               <string>Angle Bending</string>
+              </property>
+              <layout class="QVBoxLayout" name="verticalLayout_20">
+               <item>
+                <layout class="QHBoxLayout" name="horizontalLayout_10">
+                 <item>
+                  <widget class="QPushButton" name="addAngleBendRowButton">
+                   <property name="text">
+                    <string>Add Angle...</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <spacer name="horizontalSpacer_2">
+                   <property name="orientation">
+                    <enum>Qt::Orientation::Horizontal</enum>
+                   </property>
+                   <property name="sizeHint" stdset="0">
+                    <size>
+                     <width>40</width>
+                     <height>20</height>
+                    </size>
+                   </property>
+                  </spacer>
+                 </item>
+                </layout>
+               </item>
+               <item>
+                <widget class="QTableWidget" name="angleBendTableWidget">
+                 <property name="columnCount">
+                  <number>5</number>
+                 </property>
+                 <column>
+                  <property name="text">
+                   <string>Angle</string>
+                  </property>
+                 </column>
+                 <column>
+                  <property name="text">
+                   <string>Left</string>
+                  </property>
+                 </column>
+                 <column>
+                  <property name="text">
+                   <string>Right</string>
+                  </property>
+                 </column>
+                 <column>
+                  <property name="text">
+                   <string>Start correction</string>
+                  </property>
+                 </column>
+                 <column>
+                  <property name="text">
+                   <string>End correction</string>
+                  </property>
+                 </column>
                 </widget>
                </item>
               </layout>
              </widget>
+            </item>
+            <item>
+             <widget class="QGroupBox" name="arcBendGroup">
+              <property name="title">
+               <string>Arc Bending</string>
+              </property>
+              <layout class="QVBoxLayout" name="verticalLayout_21">
+               <item>
+                <layout class="QHBoxLayout" name="horizontalLayout_11">
+                 <item>
+                  <widget class="QPushButton" name="addArcBendRowButton">
+                   <property name="text">
+                    <string>Add Radius...</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <spacer name="horizontalSpacer_3">
+                   <property name="orientation">
+                    <enum>Qt::Orientation::Horizontal</enum>
+                   </property>
+                   <property name="sizeHint" stdset="0">
+                    <size>
+                     <width>40</width>
+                     <height>20</height>
+                    </size>
+                   </property>
+                  </spacer>
+                 </item>
+                </layout>
+               </item>
+               <item>
+                <widget class="QTableWidget" name="arcBendTableWidget">
+                 <property name="columnCount">
+                  <number>10</number>
+                 </property>
+                 <column>
+                  <property name="text">
+                   <string>Radius</string>
+                  </property>
+                 </column>
+                 <column>
+                  <property name="text">
+                   <string>Hits</string>
+                  </property>
+                 </column>
+                 <column>
+                  <property name="text">
+                   <string>Right 90</string>
+                  </property>
+                 </column>
+                 <column>
+                  <property name="text">
+                   <string>Right 45</string>
+                  </property>
+                 </column>
+                 <column>
+                  <property name="text">
+                   <string>Left 90</string>
+                  </property>
+                 </column>
+                 <column>
+                  <property name="text">
+                   <string>Left 45</string>
+                  </property>
+                 </column>
+                 <column>
+                  <property name="text">
+                   <string>Start correction</string>
+                  </property>
+                 </column>
+                 <column>
+                  <property name="text">
+                   <string>End correction</string>
+                  </property>
+                 </column>
+                 <column>
+                  <property name="text">
+                   <string>Bridge reduction</string>
+                  </property>
+                 </column>
+                 <column>
+                  <property name="text">
+                   <string>Recalculate</string>
+                  </property>
+                 </column>
+                </widget>
+               </item>
+              </layout>
+             </widget>
+            </item>
+           </layout>
+          </widget>
+          <widget class="QWidget" name="tab">
+           <attribute name="title">
+            <string>Flags &amp; Handles</string>
+           </attribute>
+           <layout class="QVBoxLayout" name="verticalLayout_18">
+            <item>
+             <widget class="QGroupBox" name="flagSettingsGroup">
+             <property name="title">
+               <string>RuleProfile Flags and Handles</string>
+              </property>
+              <layout class="QHBoxLayout" name="horizontalLayout_8">
+               <item>
+                <layout class="QVBoxLayout" name="verticalLayout_14">
+                 <item>
+                  <layout class="QHBoxLayout" name="horizontalLayout">
+                   <item>
+                    <widget class="QLabel" name="labelStartFlagColor">
+                     <property name="text">
+                      <string>Start flag</string>
+                     </property>
+                    </widget>
+                   </item>
+                   <item>
+                    <widget class="QPushButton" name="startFlagColorButton">
+                     <property name="text">
+                      <string>Choose color</string>
+                     </property>
+                    </widget>
+                   </item>
+                  </layout>
+                 </item>
+                 <item>
+                  <layout class="QHBoxLayout" name="horizontalLayout_3">
+                   <item>
+                    <widget class="QLabel" name="labelEndFlagColor">
+                     <property name="text">
+                      <string>End flag</string>
+                     </property>
+                    </widget>
+                   </item>
+                   <item>
+                    <widget class="QPushButton" name="endFlagColorButton">
+                     <property name="text">
+                      <string>Choose color</string>
+                     </property>
+                    </widget>
+                   </item>
+                  </layout>
+                 </item>
+                 <item>
+                  <layout class="QHBoxLayout" name="horizontalLayout_2">
+                   <item>
+                    <widget class="QLabel" name="labelFlagScale">
+                     <property name="text">
+                      <string>Flag size</string>
+                     </property>
+                    </widget>
+                   </item>
+                   <item>
+                    <widget class="QSlider" name="flagScaleSlider">
+                     <property name="minimum">
+                      <number>50</number>
+                     </property>
+                     <property name="maximum">
+                      <number>300</number>
+                     </property>
+                     <property name="singleStep">
+                      <number>5</number>
+                     </property>
+                     <property name="pageStep">
+                      <number>10</number>
+                     </property>
+                     <property name="value">
+                      <number>100</number>
+                     </property>
+                     <property name="orientation">
+                      <enum>Qt::Orientation::Horizontal</enum>
+                     </property>
+                    </widget>
+                   </item>
+                   <item>
+                    <widget class="QLabel" name="flagScaleValueLabel">
+                     <property name="minimumSize">
+                      <size>
+                       <width>48</width>
+                       <height>0</height>
+                      </size>
+                     </property>
+                     <property name="text">
+                      <string>100 %</string>
+                     </property>
+                    </widget>
+                   </item>
+                  </layout>
+                 </item>
+                 <item>
+                  <layout class="QHBoxLayout" name="horizontalLayout_4">
+                   <item>
+                    <widget class="QLabel" name="labelFlagFill">
+                     <property name="text">
+                      <string>Fill flags</string>
+                     </property>
+                    </widget>
+                   </item>
+                   <item>
+                    <widget class="QCheckBox" name="fillFlagsCheckBox">
+                     <property name="text">
+                      <string>Filled</string>
+                     </property>
+                     <property name="checked">
+                      <bool>true</bool>
+                     </property>
+                    </widget>
+                   </item>
+                  </layout>
+                 </item>
+                 <item>
+                  <layout class="QHBoxLayout" name="horizontalLayout_5">
+                   <item>
+                    <widget class="QLabel" name="labelFlagPreview">
+                     <property name="text">
+                      <string>Preview</string>
+                     </property>
+                    </widget>
+                   </item>
+                   <item>
+                    <widget class="QLabel" name="flagPreviewLabel">
+                     <property name="minimumSize">
+                      <size>
+                       <width>220</width>
+                       <height>120</height>
+                      </size>
+                     </property>
+                     <property name="frameShape">
+                      <enum>QFrame::Shape::StyledPanel</enum>
+                     </property>
+                     <property name="text">
+                      <string/>
+                     </property>
+                    </widget>
+                   </item>
+                  </layout>
+                 </item>
+                </layout>
+               </item>
+               <item>
+                <layout class="QVBoxLayout" name="verticalLayout_15">
+                 <item>
+                  <layout class="QHBoxLayout" name="horizontalLayout_7">
+                   <item>
+                    <widget class="QLabel" name="labelHandleScale">
+                     <property name="text">
+                      <string>Handle size</string>
+                     </property>
+                    </widget>
+                   </item>
+                   <item>
+                    <widget class="QSlider" name="handleScaleSlider">
+                     <property name="minimum">
+                      <number>50</number>
+                     </property>
+                     <property name="maximum">
+                      <number>300</number>
+                     </property>
+                     <property name="singleStep">
+                      <number>5</number>
+                     </property>
+                     <property name="pageStep">
+                      <number>10</number>
+                     </property>
+                     <property name="value">
+                      <number>100</number>
+                     </property>
+                     <property name="orientation">
+                      <enum>Qt::Orientation::Horizontal</enum>
+                     </property>
+                    </widget>
+                   </item>
+                   <item>
+                    <widget class="QLabel" name="handleScaleValueLabel">
+                     <property name="minimumSize">
+                      <size>
+                       <width>48</width>
+                       <height>0</height>
+                      </size>
+                     </property>
+                     <property name="text">
+                      <string>100 %</string>
+                     </property>
+                    </widget>
+                   </item>
+                  </layout>
+                 </item>
+                 <item>
+                  <layout class="QHBoxLayout" name="horizontalLayout_6">
+                   <item>
+                    <widget class="QLabel" name="labelHandlePreview">
+                     <property name="text">
+                      <string>Preview</string>
+                     </property>
+                    </widget>
+                   </item>
+                   <item>
+                    <widget class="QLabel" name="handlePreviewLabel">
+                     <property name="minimumSize">
+                      <size>
+                       <width>220</width>
+                       <height>120</height>
+                      </size>
+                     </property>
+                     <property name="frameShape">
+                      <enum>QFrame::Shape::StyledPanel</enum>
+                     </property>
+                     <property name="text">
+                      <string/>
+                     </property>
+                    </widget>
+                   </item>
+                  </layout>
+                 </item>
+                </layout>
+               </item>
+              </layout>
+             </widget>
+            </item>
+            <item>
+             <spacer name="verticalSpacer">
+              <property name="orientation">
+               <enum>Qt::Orientation::Vertical</enum>
+              </property>
+              <property name="sizeHint" stdset="0">
+               <size>
+                <width>20</width>
+                <height>40</height>
+               </size>
+              </property>
+             </spacer>
             </item>
            </layout>
           </widget>
@@ -654,7 +938,7 @@
       </widget>
       <widget class="QWidget" name="simulationTab">
        <attribute name="title">
-        <string>Simulointi</string>
+        <string>Simulation</string>
        </attribute>
        <layout class="QVBoxLayout" name="verticalLayout_4">
         <item>
@@ -798,9 +1082,9 @@
     </rect>
    </property>
    <widget class="QMenu" name="menuFile">
-   <property name="title">
-    <string>&amp;File</string>
-   </property>
+    <property name="title">
+     <string>&amp;File</string>
+    </property>
     <addaction name="actionOpenProject"/>
     <addaction name="actionSaveProject"/>
     <addaction name="actionSaveProjectAs"/>
@@ -820,6 +1104,7 @@
     <addaction name="actionClearBladeLine"/>
     <addaction name="separator"/>
     <addaction name="actionCreateBreak"/>
+    <addaction name="actionJoinLinesToIntersection"/>
     <addaction name="actionCreateFillet"/>
    </widget>
    <widget class="QMenu" name="menuView">
@@ -874,11 +1159,11 @@
    </property>
   </action>
   <action name="actionLastDxfDirectory">
-   <property name="text">
-    <string>Previous files: (none)</string>
-   </property>
    <property name="enabled">
     <bool>false</bool>
+   </property>
+   <property name="text">
+    <string>Previous files: (none)</string>
    </property>
   </action>
   <action name="actionFitView">
@@ -903,6 +1188,14 @@
    </property>
    <property name="shortcut">
     <string>B</string>
+   </property>
+  </action>
+  <action name="actionJoinLinesToIntersection">
+   <property name="text">
+    <string>Join Lines To Intersection</string>
+   </property>
+   <property name="shortcut">
+    <string>J</string>
    </property>
   </action>
   <action name="actionAddSelectedToBladeLine">

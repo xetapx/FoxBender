@@ -69,3 +69,6 @@ INCLUDEPATH += \
 
 DISTFILES += \
     codex_ohje_teralinja_qt_cpp_v_1.md
+
+TRANSLATIONS += \
+    i18n/FoxBender_fi.ts

@@ -43,6 +43,7 @@ FoxBender
 .qt/
 .qtc_clangd/
 .qtcreator/
+*.pro.user
 
 # käyttöjärjestelmä
 .DS_Store
